@@ -1,0 +1,14 @@
+# CCTV Real-Time Security AI Engine Dependencies
+ultralytics>=8.0.0
+opencv-python>=4.8.0
+faiss-cpu>=1.7.4
+fastapi>=0.100.0
+pydantic>=2.0
+uvicorn>=0.23.0
+aiosqlite>=0.19.0
+websockets>=11.0
+torch>=2.0.0
+numpy>=1.24.0
+pyyaml>=6.0
+deepface>=0.0.79
+cryptography>=41.0.0

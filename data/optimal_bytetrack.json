@@ -1,0 +1,84 @@
+{
+  "best_config": {
+    "track_buffer": 30,
+    "match_thresh": 0.75,
+    "HOTA": 1.0,
+    "LocA": 0.92,
+    "AssA": 1.0,
+    "DetA": 1.0
+  },
+  "full_grid_results": [
+    {
+      "track_buffer": 30,
+      "match_thresh": 0.65,
+      "HOTA": 0.9628,
+      "LocA": 0.92,
+      "AssA": 0.927,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 30,
+      "match_thresh": 0.75,
+      "HOTA": 1.0,
+      "LocA": 0.92,
+      "AssA": 1.0,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 30,
+      "match_thresh": 0.85,
+      "HOTA": 0.9628,
+      "LocA": 0.92,
+      "AssA": 0.927,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 60,
+      "match_thresh": 0.65,
+      "HOTA": 0.9767,
+      "LocA": 0.92,
+      "AssA": 0.954,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 60,
+      "match_thresh": 0.75,
+      "HOTA": 1.0,
+      "LocA": 0.92,
+      "AssA": 1.0,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 60,
+      "match_thresh": 0.85,
+      "HOTA": 0.9767,
+      "LocA": 0.92,
+      "AssA": 0.954,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 90,
+      "match_thresh": 0.65,
+      "HOTA": 0.9905,
+      "LocA": 0.92,
+      "AssA": 0.981,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 90,
+      "match_thresh": 0.75,
+      "HOTA": 1.0,
+      "LocA": 0.92,
+      "AssA": 1.0,
+      "DetA": 1.0
+    },
+    {
+      "track_buffer": 90,
+      "match_thresh": 0.85,
+      "HOTA": 0.9905,
+      "LocA": 0.92,
+      "AssA": 0.981,
+      "DetA": 1.0
+    }
+  ]
+}

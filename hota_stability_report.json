@@ -1,0 +1,18 @@
+{
+  "raw_metrics": {
+    "HOTA": 0.8982,
+    "LocA": 0.8982,
+    "AssA": 1.0,
+    "DetA": 1.0
+  },
+  "filtered_metrics": {
+    "HOTA": 0.9367,
+    "LocA": 0.9367,
+    "AssA": 1.0,
+    "DetA": 1.0
+  },
+  "improvements": {
+    "spatial_stability_loca_percent": 4.29,
+    "hota_percent": 4.29
+  }
+}

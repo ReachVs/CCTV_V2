@@ -1,0 +1,32 @@
+# Python virtual environments & bytecode
+venv
+venv/
+.venv
+.venv/
+env/
+__pycache__/
+*.py[cod]
+*$py.class
+*.so
+
+# macOS & IDE metadata
+.DS_Store
+.idea/
+.vscode/
+*.swp
+
+# Biometric & Security Privacy Artifacts
+events/
+data/*.db
+data/*.db-shm
+data/*.db-wal
+data/.audit_key
+data/debug_crops/
+data/known_faces/
+data/dataset/
+data/faces.index
+data/metadata.json
+*.log
+
+# Temporary / testing outputs
+stress_occlusion.mp4

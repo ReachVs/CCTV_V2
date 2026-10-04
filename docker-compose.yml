@@ -1,0 +1,15 @@
+version: '3.8'
+
+services:
+  cctv-pipeline:
+    build: .
+    image: cctv-pipeline:latest
+    container_name: cctv-pipeline-service
+    ports:
+      - "8000:8000"
+    volumes:
+      # Mount data directory to persist database, FAISS index, and enrolled profiles
+      - ./data:/app/data
+    environment:
+      - PYTHONUNBUFFERED=1
+    command: python3 cctv_server_fastapi.py

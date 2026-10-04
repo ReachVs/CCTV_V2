@@ -1,0 +1,8 @@
+# Real-World Static CCTV Optimized ByteTrack Configuration
+tracker_type: bytetrack
+track_high_thresh: 0.35      # Lower threshold to keep tracking during head turns and lighting changes
+track_low_thresh: 0.1       # Low-confidence threshold for occluded targets
+new_track_thresh: 0.45       # Threshold to initialize a track ID
+track_buffer: 120            # 120 frames (4 seconds) retention buffer for lost tracks
+match_thresh: 0.70           # IoU association threshold
+fuse_score: True

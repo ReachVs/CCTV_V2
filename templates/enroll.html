@@ -1,0 +1,945 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLEEPER AGENT // Subject Enrollment Engine</title>
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-base: #000000;
+            --bg-card: rgba(18, 20, 26, 0.9);
+            --bg-card-solid: #12141a;
+            --border-dim: rgba(255, 255, 255, 0.15);
+            --border-glow: rgba(255, 255, 255, 0.4);
+            
+            /* High-Contrast Monochrome & Metallic Chrome Tokens */
+            --cyan-main: #ffffff;
+            --cyan-dim: #cbd5e1;
+            --chrome-light: #ffffff;
+            --chrome-mid: #e2e8f0;
+            --chrome-dark: #64748b;
+            
+            --emerald-bright: #ffffff;
+            --emerald-glow: rgba(255, 255, 255, 0.3);
+            --rose-alert: #cbd5e1;
+            --rose-glow: rgba(203, 213, 225, 0.3);
+            --amber-warn: #94a3b8;
+            
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+        }
+
+        body {
+            background-color: #000000;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(255, 255, 255, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(203, 213, 225, 0.04) 0%, transparent 40%);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+        }
+
+        /* Header */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 28px;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-dim);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+        }
+
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            overflow: hidden;
+            flex-shrink: 0;
+            filter: drop-shadow(0 0 6px rgba(255,255,255,0.2));
+        }
+
+        .logo-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+.brand-text h1 {
+            font-size: 1.15rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            color: #fff;
+            text-transform: uppercase;
+        }
+
+        .brand-text span {
+            color: var(--cyan-main);
+        }
+
+        .btn-nav {
+            background: rgba(0, 242, 255, 0.08);
+            border: 1px solid var(--border-glow);
+            color: var(--cyan-main);
+            padding: 8px 16px;
+            border-radius: 8px;
+            font-family: var(--font-main);
+            font-size: 0.85rem;
+            font-weight: 600;
+            cursor: pointer;
+            text-decoration: none;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .btn-nav:hover {
+            background: rgba(0, 242, 255, 0.2);
+            box-shadow: 0 0 16px rgba(0, 242, 255, 0.3);
+        }
+
+        .nav-tabs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.35);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border-dim);
+        }
+
+        .nav-tab {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-family: var(--font-main);
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .nav-tab:hover {
+            color: var(--cyan-main);
+            background: rgba(0, 242, 255, 0.08);
+        }
+
+        .nav-tab.active {
+            color: var(--cyan-main);
+            background: rgba(0, 242, 255, 0.12);
+            border: 1px solid var(--border-glow);
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.2);
+        }
+
+        /* Layout Grid */
+        .enroll-container {
+            display: grid;
+            grid-template-columns: 460px 1fr;
+            gap: 24px;
+            padding: 24px;
+            max-width: 1280px;
+            margin: 0 auto;
+            width: 100%;
+            flex: 1;
+        }
+
+        .panel-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            padding: 24px;
+            display: flex;
+            flex-direction: column;
+            gap: 18px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-header h2 {
+            font-size: 1.05rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 10px;
+        }
+
+        /* Face Capture Column */
+        .webcam-viewport {
+            position: relative;
+            width: 100%;
+            aspect-ratio: 4/3;
+            background: #000;
+            border-radius: 12px;
+            overflow: hidden;
+            border: 1px solid rgba(0, 242, 255, 0.25);
+            box-shadow: 0 0 24px rgba(0, 0, 0, 0.8), 0 0 12px rgba(0, 242, 255, 0.15);
+        }
+
+        .webcam-viewport video,
+        .webcam-viewport canvas,
+        .webcam-viewport img.preview-img {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            border-radius: 12px;
+        }
+
+        .face-guide-overlay {
+            position: absolute;
+            inset: 0;
+            pointer-events: none;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+        }
+
+        .guide-ellipse {
+            width: 180px;
+            height: 230px;
+            border: 2px dashed var(--cyan-main);
+            border-radius: 50%;
+            box-shadow: 0 0 16px rgba(0, 242, 255, 0.3);
+        }
+
+        .capture-btns {
+            display: flex;
+            gap: 10px;
+        }
+
+        .action-btn {
+            flex: 1;
+            background: var(--cyan-main);
+            border: none;
+            color: #060810;
+            padding: 12px;
+            border-radius: 8px;
+            font-family: var(--font-main);
+            font-size: 0.9rem;
+            font-weight: 700;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 8px;
+            transition: all 0.2s;
+        }
+
+        .action-btn:hover {
+            box-shadow: 0 0 20px rgba(0, 242, 255, 0.5);
+            transform: translateY(-1px);
+        }
+
+        .action-btn.secondary {
+            background: rgba(255, 255, 255, 0.06);
+            border: 1px solid var(--border-dim);
+            color: var(--text-main);
+        }
+
+        .action-btn.secondary:hover {
+            background: rgba(255, 255, 255, 0.12);
+            border-color: var(--cyan-main);
+        }
+
+        .or-divider {
+            text-align: center;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            position: relative;
+        }
+
+        .or-divider::before, .or-divider::after {
+            content: '';
+            position: absolute;
+            top: 50%;
+            width: 40%;
+            height: 1px;
+            background: var(--border-dim);
+        }
+        .or-divider::before { left: 0; }
+        .or-divider::after { right: 0; }
+
+        .file-upload-box {
+            border: 2px dashed var(--border-dim);
+            border-radius: 8px;
+            padding: 16px;
+            text-align: center;
+            cursor: pointer;
+            transition: all 0.2s;
+            background: rgba(6, 8, 16, 0.4);
+        }
+
+        .file-upload-box:hover {
+            border-color: var(--cyan-main);
+            background: rgba(0, 242, 255, 0.04);
+        }
+
+        /* Form Inputs Column */
+        .form-grid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 16px;
+        }
+
+        .form-group {
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+
+        .form-group.full-width {
+            grid-column: 1 / -1;
+        }
+
+        label {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--text-muted);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        label span {
+            color: var(--rose-alert);
+        }
+
+        input[type="text"], input[type="tel"], input[type="date"], select, textarea {
+            background: rgba(6, 8, 16, 0.8);
+            border: 1px solid var(--border-dim);
+            border-radius: 8px;
+            padding: 10px 14px;
+            color: #fff;
+            font-family: var(--font-main);
+            font-size: 0.9rem;
+            outline: none;
+            transition: border-color 0.2s;
+        }
+
+        input:focus, select:focus, textarea:focus {
+            border-color: var(--cyan-main);
+            box-shadow: 0 0 12px rgba(0, 242, 255, 0.2);
+        }
+
+        textarea {
+            resize: vertical;
+            min-height: 70px;
+        }
+
+        .submit-btn {
+            background: linear-gradient(90deg, var(--cyan-dim), var(--cyan-main));
+            border: none;
+            color: #060810;
+            padding: 14px 28px;
+            border-radius: 8px;
+            font-family: var(--font-main);
+            font-size: 1rem;
+            font-weight: 800;
+            letter-spacing: 0.05em;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            gap: 10px;
+            margin-top: 10px;
+            transition: all 0.25s;
+        }
+
+        .submit-btn:hover {
+            box-shadow: 0 0 24px rgba(0, 242, 255, 0.6);
+            transform: translateY(-2px);
+        }
+
+        /* Status Modal Alert */
+        .status-toast {
+            display: none;
+            padding: 12px 16px;
+            border-radius: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.82rem;
+        }
+
+        .status-toast.success {
+            display: flex;
+            background: var(--emerald-glow);
+            border: 1px solid var(--emerald-bright);
+            color: var(--emerald-bright);
+        }
+
+        .status-toast.error {
+            display: flex;
+            background: var(--rose-glow);
+            border: 1px solid var(--rose-alert);
+            color: var(--rose-alert);
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header -->
+    <header>
+        <div class="brand-title">
+            <div class="logo-icon">
+                <img src="/logo.png" alt="Sleeper Agent Seal">
+            </div>
+            <div class="brand-text">
+                <h1>SLEEPER <span>AGENT ENROLLMENT</span></h1>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Content -->
+    <div class="enroll-container">
+        
+        <!-- Left: Face Capture -->
+        <div class="panel-card">
+            <div class="card-header">
+                <h2>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00f2ff" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                    BIOMETRIC FACE CAPTURE
+                </h2>
+            </div>
+
+            <!-- Active Pose Guidance Banner -->
+            <div id="pose-banner" style="background: rgba(0, 242, 255, 0.08); border: 1px solid #00f2ff; border-radius: 10px; padding: 10px 14px; text-align: center; display: none;">
+                <div id="pose-step-badge" style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: #00f2ff; letter-spacing: 0.08em; text-transform: uppercase;">
+                    STEP 1 OF 5: LOOK FRONTAL (CENTER)
+                </div>
+                <div id="pose-instruction" style="font-size: 0.8rem; color: #f8fafc; margin-top: 4px; font-weight: 600;">
+                    Keep face centered in ellipse, then click 'Capture Current Pose'
+                </div>
+            </div>
+
+            <div class="webcam-viewport">
+                <video id="webcam" autoplay playsinline style="display: block; width: 100%; height: 100%; object-fit: cover;"></video>
+                <img id="preview-img" class="preview-img" style="display: none; width: 100%; height: 100%; object-fit: cover;" alt="Live Biometric Raw Stream">
+                <canvas id="snapshot-canvas" style="display: none;"></canvas>
+                
+                <div class="face-guide-overlay" id="guide-overlay">
+                    <div class="guide-ellipse"></div>
+                </div>
+            </div>
+
+            <!-- 5-Pose Slot Gallery Grid -->
+            <div id="pose-gallery-container" style="display: none;">
+                <div style="font-family: var(--font-mono); font-size: 0.7rem; color: var(--text-muted); text-transform: uppercase; margin-bottom: 6px; letter-spacing: 0.05em;">
+                    Captured Pose Slots (Click any slot to retake):
+                </div>
+                <div id="pose-slots-grid" style="display: grid; grid-template-columns: repeat(5, 1fr); gap: 6px;"></div>
+            </div>
+
+            <div class="capture-btns" style="flex-wrap: wrap; gap: 8px;">
+                <button type="button" class="action-btn" id="btn-snap" style="flex: 1; min-width: 130px; font-size: 0.82rem;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><circle cx="12" cy="12" r="3"/></svg>
+                    Single Snapshot
+                </button>
+
+                <button type="button" class="action-btn" id="btn-start-5pose" style="flex: 1; min-width: 140px; background: #00f2ff; color: #000; font-size: 0.82rem;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="12 2 15.09 8.26 22 9.27 17 14.14 18.18 21.02 12 17.77 5.82 21.02 7 14.14 2 9.27 8.91 8.26 12 2"/></svg>
+                    Start 5-Pose Wizard
+                </button>
+
+                <button type="button" class="action-btn" id="btn-capture-current-pose" style="display: none; width: 100%; background: #00f2ff; color: #000; font-size: 0.9rem; padding: 12px;">
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 8v8M8 12h8"/></svg>
+                    <span id="capture-pose-btn-text">CAPTURE POSE #1 (FRONTAL)</span>
+                </button>
+
+                <button type="button" class="action-btn secondary" id="btn-retake" style="display: none; width: 100%; font-size: 0.82rem;">
+                    <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="23 4 23 10 17 10"/><path d="M20.49 15a9 9 0 1 1-2.12-9.36L23 10"/></svg>
+                    Reset All Poses
+                </button>
+            </div>
+
+            <div class="or-divider">OR UPLOAD PHOTO</div>
+
+            <div class="file-upload-box" onclick="document.getElementById('file-input').click();">
+                <svg width="24" height="24" viewBox="0 0 24 24" fill="none" stroke="#00f2ff" stroke-width="2" style="margin-bottom: 6px;"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div style="font-size: 0.85rem; font-weight: 600;">Drag & Drop Image or Browse</div>
+                <div style="font-family: var(--font-mono); font-size: 0.68rem; color: var(--text-muted); margin-top: 2px;">Drop JPG, JPEG, PNG file here or click to select</div>
+                <input type="file" id="file-input" accept="image/*" style="display: none;">
+            </div>
+        </div>
+
+        <!-- Right: Bio Credentials Form -->
+        <div class="panel-card">
+            <div class="card-header">
+                <h2>
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#00f2ff" stroke-width="2"><path d="M14 2H6a2 2 0 0 0-2 2v16a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+                    SUBJECT IDENTITY CREDENTIALS
+                </h2>
+            </div>
+
+            <div class="status-toast" id="toast-msg"></div>
+
+            <form id="enroll-form" class="form-grid">
+                <div class="form-group full-width">
+                    <label>Full Name <span>*</span></label>
+                    <input type="text" id="full_name" placeholder="e.g. Jane Doe" required>
+                </div>
+
+                <div class="form-group">
+                    <label>Phone Number</label>
+                    <input type="tel" id="phone_number" placeholder="+1 234 567 8900">
+                </div>
+
+                <div class="form-group">
+                    <label>Occupation</label>
+                    <input type="text" id="occupation" placeholder="e.g. Security Specialist">
+                </div>
+
+                <div class="form-group">
+                    <label>Date of Birth</label>
+                    <input type="date" id="dob">
+                </div>
+
+                <div class="form-group">
+                    <label>Security Clearance</label>
+                    <select id="clearance">
+                        <option value="LEVEL 1">LEVEL 1 (Standard)</option>
+                        <option value="SECRET">SECRET</option>
+                        <option value="TOP SECRET / SCI">TOP SECRET / SCI</option>
+                    </select>
+                </div>
+
+                <div class="form-group full-width">
+                    <label>Address</label>
+                    <textarea id="address" placeholder="Residential or Office Address..."></textarea>
+                </div>
+
+                <div class="form-group full-width">
+                    <label>Threat Level Rating</label>
+                    <select id="threat_level">
+                        <option value="LOW">LOW (Authorized Personnel)</option>
+                        <option value="MODERATE">MODERATE (Guest / Visitor)</option>
+                        <option value="HIGH">HIGH (Restricted Access)</option>
+                        <option value="CRITICAL">CRITICAL (Watchlist / Alert)</option>
+                    </select>
+                </div>
+
+                <div class="form-group full-width">
+                    <button type="submit" class="submit-btn" id="btn-submit">
+                        <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                        ENROLL BIOMETRIC PROFILE
+                    </button>
+                </div>
+            </form>
+        </div>
+
+    </div>
+
+    <!-- JavaScript Camera & API Logic -->
+    <script>
+        const video = document.getElementById('webcam');
+        const previewImg = document.getElementById('preview-img');
+        const canvas = document.getElementById('snapshot-canvas');
+        const guideOverlay = document.getElementById('guide-overlay');
+        const btnSnap = document.getElementById('btn-snap');
+        const btnRetake = document.getElementById('btn-retake');
+        const btnStart5Pose = document.getElementById('btn-start-5pose');
+        const btnCaptureCurrentPose = document.getElementById('btn-capture-current-pose');
+        const capturePoseBtnText = document.getElementById('capture-pose-btn-text');
+        const poseBanner = document.getElementById('pose-banner');
+        const poseStepBadge = document.getElementById('pose-step-badge');
+        const poseInstruction = document.getElementById('pose-instruction');
+        const poseGalleryContainer = document.getElementById('pose-gallery-container');
+        const poseSlotsGrid = document.getElementById('pose-slots-grid');
+        const dropzone = document.getElementById('dropzone');
+        const fileInput = document.getElementById('file-input');
+        const form = document.getElementById('enroll-form');
+        const btnSubmit = document.getElementById('btn-submit');
+        const toast = document.getElementById('toast');
+
+        let capturedBase64 = null;
+        let capturedPosesBase64 = [];
+        let latestStreamFrameB64 = null;
+        let poseSlotImages = [null, null, null, null, null];
+        let currentStepIndex = 0;
+        let isWizardActive = false;
+
+        const POSE_STEPS = [
+            { tag: "Frontal", name: "Pose 1/5: Look Frontal (Center)", label: "Frontal", instruction: "Keep your face centered and look straight at the camera." },
+            { tag: "Left", name: "Pose 2/5: Turn Head Left", label: "Turn Left", instruction: "Turn your head ~15°-20° to your LEFT side." },
+            { tag: "Right", name: "Pose 3/5: Turn Head Right", label: "Turn Right", instruction: "Turn your head ~15°-20° to your RIGHT side." },
+            { tag: "TiltUp", name: "Pose 4/5: Tilt Head Up", label: "Tilt Up", instruction: "Tilt your chin slightly UPWARD (~15°)." },
+            { tag: "Smile", name: "Pose 5/5: Natural / Smile", label: "Natural / Smile", instruction: "Adopt a natural facial expression or slight smile." }
+        ];
+
+        // Native Browser Webcam Enrollment Engine (0% AI Overhead - Full Hardware Potential)
+        async function startWebcam() {
+            try {
+                // Pause server camera handle so browser getUserMedia gets 100% exclusive hardware access on macOS
+                await fetch('/api/camera/pause');
+            } catch (e) {
+                console.warn("Pause camera error:", e);
+            }
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: { width: { ideal: 1280 }, height: { ideal: 720 }, facingMode: "user" }
+                });
+                video.srcObject = stream;
+                video.style.display = 'block';
+                previewImg.style.display = 'none';
+                showToast("Native HD Webcam connected at maximum sensor resolution.", true);
+            } catch (err) {
+                console.warn("Native webcam notice, connecting to server raw fallback stream:", err);
+                try {
+                    await fetch('/api/camera/resume');
+                    previewImg.src = "/raw_video_feed";
+                    previewImg.style.display = 'block';
+                    video.style.display = 'none';
+                } catch (fallbackErr) {
+                    console.error("Fallback stream error:", fallbackErr);
+                }
+            }
+        }
+        startWebcam();
+
+        function stopWebcamTracks() {
+            if (video.srcObject) {
+                try {
+                    const tracks = video.srcObject.getTracks();
+                    tracks.forEach(track => track.stop());
+                } catch (e) {}
+                video.srcObject = null;
+            }
+        }
+
+        window.addEventListener('beforeunload', () => {
+            stopWebcamTracks();
+            if (navigator.sendBeacon) {
+                navigator.sendBeacon('/api/camera/resume');
+            } else {
+                fetch('/api/camera/resume');
+            }
+        });
+
+        async function getCurrentFrameBase64() {
+            if (video.style.display !== 'none' && video.videoWidth > 0) {
+                canvas.width = video.videoWidth;
+                canvas.height = video.videoHeight;
+                const ctx = canvas.getContext('2d');
+                ctx.drawImage(video, 0, 0);
+                return canvas.toDataURL('image/jpeg', 0.95);
+            } else if (latestStreamFrameB64) {
+                return latestStreamFrameB64;
+            } else {
+                try {
+                    const res = await fetch('/api/camera/frame');
+                    const data = await res.json();
+                    if (data.status === 'success') return data.image_base64;
+                } catch (e) {
+                    console.error("Fetch camera frame error:", e);
+                }
+                return null;
+            }
+        }
+
+        // Single Snapshot
+        btnSnap.addEventListener('click', async () => {
+            const frameB64 = await getCurrentFrameBase64();
+            if (!frameB64) {
+                alert("Camera feed not ready yet.");
+                return;
+            }
+            capturedBase64 = frameB64;
+            capturedPosesBase64 = [capturedBase64];
+
+            previewImg.src = capturedBase64;
+            previewImg.style.display = 'block';
+            video.style.display = 'none';
+            guideOverlay.style.display = 'none';
+            btnSnap.style.display = 'none';
+            btnStart5Pose.style.display = 'none';
+            btnCaptureCurrentPose.style.display = 'none';
+            poseBanner.style.display = 'none';
+            poseGalleryContainer.style.display = 'none';
+            btnRetake.style.display = 'flex';
+            showToast("Single snapshot captured. Fill form and click Enroll.", true);
+        });
+
+        // Start 5-Pose Guided Wizard
+        btnStart5Pose.addEventListener('click', () => {
+            isWizardActive = true;
+            currentStepIndex = 0;
+            poseSlotImages = [null, null, null, null, null];
+            capturedPosesBase64 = [];
+
+            btnSnap.style.display = 'none';
+            btnStart5Pose.style.display = 'none';
+            btnCaptureCurrentPose.style.display = 'flex';
+            btnRetake.style.display = 'flex';
+            poseBanner.style.display = 'block';
+            poseGalleryContainer.style.display = 'block';
+            previewImg.style.display = 'block';
+            guideOverlay.style.display = 'flex';
+
+            renderPoseSlotsGrid();
+            updateStepUI();
+        });
+
+        // Capture Current Active Pose (Step Approval)
+        btnCaptureCurrentPose.addEventListener('click', async () => {
+            const frameB64 = await getCurrentFrameBase64();
+            if (!frameB64) {
+                alert("Camera feed not ready yet.");
+                return;
+            }
+
+            poseSlotImages[currentStepIndex] = frameB64;
+            renderPoseSlotsGrid();
+
+            showToast(`✓ Captured ${POSE_STEPS[currentStepIndex].label}!`, true);
+
+            // Advance to next uncaptured pose slot
+            let nextIndex = poseSlotImages.findIndex(img => img === null);
+            if (nextIndex !== -1) {
+                currentStepIndex = nextIndex;
+                updateStepUI();
+            } else {
+                // All 5 poses captured!
+                capturedPosesBase64 = poseSlotImages.filter(img => img !== null);
+                capturedBase64 = capturedPosesBase64[0];
+                poseStepBadge.textContent = "✓ ALL 5 POSES CAPTURED & APPROVED!";
+                poseInstruction.textContent = "All 5 facial angles captured. Click ENROLL BIOMETRIC PROFILE to save.";
+                capturePoseBtnText.textContent = "✓ ALL 5 POSES READY!";
+                btnCaptureCurrentPose.style.background = "#00ff88";
+                showToast("All 5 poses approved! Fill form and click Enroll.", true);
+            }
+        });
+
+        function updateStepUI() {
+            const step = POSE_STEPS[currentStepIndex];
+            poseStepBadge.textContent = `STEP ${currentStepIndex + 1} OF 5: ${step.name.toUpperCase()}`;
+            poseInstruction.textContent = step.instruction;
+            capturePoseBtnText.textContent = `📷 CAPTURE POSE #${currentStepIndex + 1} (${step.label.toUpperCase()})`;
+            btnCaptureCurrentPose.style.background = "#00f2ff";
+        }
+
+        function renderPoseSlotsGrid() {
+            poseSlotsGrid.innerHTML = '';
+            POSE_STEPS.forEach((step, idx) => {
+                const imgData = poseSlotImages[idx];
+                const slot = document.createElement('div');
+                const isActive = (idx === currentStepIndex);
+                
+                slot.style.cssText = `
+                    position: relative;
+                    aspect-ratio: 1/1;
+                    border-radius: 8px;
+                    overflow: hidden;
+                    border: 2px ${isActive ? 'solid #00f2ff' : (imgData ? 'solid #00ff88' : 'dashed rgba(255,255,255,0.2)')};
+                    background: ${isActive ? 'rgba(0,242,255,0.1)' : 'rgba(0,0,0,0.5)'};
+                    cursor: pointer;
+                    display: flex;
+                    flex-direction: column;
+                    align-items: center;
+                    justify-content: center;
+                    transition: all 0.2s;
+                `;
+
+                if (imgData) {
+                    slot.innerHTML = `
+                        <img src="${imgData}" style="width: 100%; height: 100%; object-fit: cover;">
+                        <span style="position: absolute; top: 2px; right: 2px; background: #00ff88; color: #000; font-family: var(--font-mono); font-size: 9px; font-weight: 700; padding: 1px 4px; border-radius: 4px;">✓ P${idx+1}</span>
+                        <span style="position: absolute; bottom: 2px; left: 2px; background: rgba(0,0,0,0.85); color: #fff; font-size: 8px; padding: 1px 3px; border-radius: 3px;">${step.label}</span>
+                    `;
+                } else {
+                    slot.innerHTML = `
+                        <div style="font-family: var(--font-mono); font-size: 10px; color: ${isActive ? '#00f2ff' : '#64748b'}; font-weight: 700;">P${idx+1}</div>
+                        <div style="font-size: 8px; color: ${isActive ? '#fff' : '#64748b'}; text-align: center; line-height: 1.1; margin-top: 2px;">${step.label}</div>
+                    `;
+                }
+
+                slot.addEventListener('click', () => {
+                    currentStepIndex = idx;
+                    updateStepUI();
+                });
+
+                poseSlotsGrid.appendChild(slot);
+            });
+        }
+
+        // Reset / Retake Snapshot
+        btnRetake.addEventListener('click', () => {
+            capturedBase64 = null;
+            capturedPosesBase64 = [];
+            poseSlotImages = [null, null, null, null, null];
+            currentStepIndex = 0;
+            isWizardActive = false;
+
+            previewImg.style.display = 'block';
+            poseBanner.style.display = 'none';
+            poseGalleryContainer.style.display = 'none';
+            btnCaptureCurrentPose.style.display = 'none';
+            guideOverlay.style.display = 'flex';
+            btnSnap.style.display = 'flex';
+            btnStart5Pose.style.display = 'flex';
+            btnRetake.style.display = 'none';
+            fileInput.value = '';
+            showToast("Reset all captured poses. Ready to restart capture.", true);
+        });
+
+        // Handle File Upload & Drag-and-Drop
+        const dropBox = document.querySelector('.file-upload-box');
+
+        ['dragenter', 'dragover'].forEach(eventName => {
+            dropBox.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropBox.style.borderColor = '#00f2ff';
+                dropBox.style.background = 'rgba(0, 242, 255, 0.12)';
+            }, false);
+        });
+
+        ['dragleave', 'drop'].forEach(eventName => {
+            dropBox.addEventListener(eventName, (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                dropBox.style.borderColor = 'var(--border-dim)';
+                dropBox.style.background = 'rgba(6, 8, 16, 0.4)';
+            }, false);
+        });
+
+        dropBox.addEventListener('drop', (e) => {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+            if (files && files.length > 0) {
+                processFile(files[0]);
+            }
+        });
+
+        fileInput.addEventListener('change', (e) => {
+            const file = e.target.files[0];
+            if (file) processFile(file);
+        });
+
+        function processFile(file) {
+            if (!file.type.startsWith('image/')) {
+                showToast("Please drop or select a valid image file (JPG, PNG, WebP).", false);
+                return;
+            }
+            const reader = new FileReader();
+            reader.onload = (event) => {
+                capturedBase64 = event.target.result;
+                capturedPosesBase64 = [capturedBase64];
+                previewImg.src = capturedBase64;
+                previewImg.style.display = 'block';
+                video.style.display = 'none';
+                guideOverlay.style.display = 'none';
+                poseBanner.style.display = 'none';
+                poseGalleryContainer.style.display = 'none';
+                btnSnap.style.display = 'none';
+                btnStart5Pose.style.display = 'none';
+                btnCaptureCurrentPose.style.display = 'none';
+                btnRetake.style.display = 'flex';
+                showToast("Image loaded successfully. Fill form and click Enroll.", true);
+            };
+            reader.readAsDataURL(file);
+        }
+
+        // Submit Form
+        document.getElementById('enroll-form').addEventListener('submit', async (e) => {
+            e.preventDefault();
+
+            const fullName = document.getElementById('full_name').value.trim();
+            if (!fullName) {
+                showToast("Please enter Full Name.", false);
+                return;
+            }
+
+            const validPoses = poseSlotImages.filter(img => img !== null);
+            if (validPoses.length > 0) {
+                capturedPosesBase64 = validPoses;
+            }
+
+            if (!capturedPosesBase64 || capturedPosesBase64.length === 0) {
+                showToast("Please capture a photo or complete the pose wizard first.", false);
+                return;
+            }
+
+            const payload = {
+                full_name: fullName,
+                phone_number: document.getElementById('phone_number').value.trim(),
+                occupation: document.getElementById('occupation').value.trim(),
+                dob: document.getElementById('dob').value,
+                clearance: document.getElementById('clearance').value,
+                address: document.getElementById('address').value.trim(),
+                threat_level: document.getElementById('threat_level').value,
+                images_base64: capturedPosesBase64,
+                image_base64: capturedPosesBase64[0]
+            };
+
+            const submitBtn = document.getElementById('btn-submit');
+            submitBtn.disabled = true;
+            submitBtn.innerHTML = `ENROLLING & INDEXING FAISS...`;
+
+            try {
+                const res = await fetch('/api/enroll', {
+                    method: 'POST',
+                    headers: { 'Content-Type': 'application/json' },
+                    body: JSON.stringify(payload)
+                });
+
+                const data = await res.json();
+                if (res.ok && data.status === 'success') {
+                    showToast(`Successfully Enrolled '${fullName}' (${data.message})`, true);
+                    setTimeout(() => {
+                        window.location.href = '/';
+                    }, 2200);
+                } else {
+                    showToast(`Enrollment Error: ${data.message || 'Unknown server response'}`, false);
+                }
+            } catch (err) {
+                console.error("Enrollment submission error:", err);
+                showToast(`Server Connection Error: ${err.message}. Please verify server is running on localhost:8000.`, false);
+            } finally {
+                submitBtn.disabled = false;
+                submitBtn.innerHTML = `
+                    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M19 21H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11l5 5v11a2 2 0 0 1-2 2z"/><polyline points="17 21 17 13 7 13 7 21"/><polyline points="7 3 7 8 15 8"/></svg>
+                    ENROLL BIOMETRIC PROFILE
+                `;
+            }
+        });
+
+        function showToast(msg, isSuccess) {
+            if (!toast) return;
+            toast.textContent = msg;
+            toast.className = `status-toast ${isSuccess ? 'success' : 'error'}`;
+            toast.style.display = 'flex';
+        }
+    </script>
+</body>
+</html>

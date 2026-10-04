@@ -1,0 +1,1590 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>SLEEPER AGENT // Biometric Command Center</title>
+    <!-- Google Fonts -->
+    <link rel="preconnect" href="https://fonts.googleapis.com">
+    <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+    <link href="https://fonts.googleapis.com/css2?family=JetBrains+Mono:wght@400;500;700&family=Outfit:wght@300;400;600;700;800&display=swap" rel="stylesheet">
+    
+    <style>
+        :root {
+            --bg-base: #000000;
+            --bg-card: rgba(18, 20, 26, 0.9);
+            --bg-card-solid: #12141a;
+            --border-dim: rgba(255, 255, 255, 0.15);
+            --border-glow: rgba(255, 255, 255, 0.4);
+            
+            /* High-Contrast Monochrome & Metallic Chrome Tokens */
+            --cyan-main: #ffffff;
+            --cyan-dim: #cbd5e1;
+            --chrome-light: #ffffff;
+            --chrome-mid: #e2e8f0;
+            --chrome-dark: #64748b;
+            
+            --emerald-bright: #ffffff;
+            --emerald-glow: rgba(255, 255, 255, 0.3);
+            --rose-alert: #cbd5e1;
+            --rose-glow: rgba(203, 213, 225, 0.3);
+            --amber-warn: #94a3b8;
+            
+            --text-main: #f8fafc;
+            --text-muted: #94a3b8;
+            --font-main: 'Outfit', sans-serif;
+            --font-mono: 'JetBrains Mono', monospace;
+        }
+
+        * {
+            box-sizing: border-box;
+            margin: 0;
+            padding: 0;
+            scrollbar-width: thin;
+            scrollbar-color: rgba(255, 255, 255, 0.3) transparent;
+        }
+
+        body {
+            background-color: #000000;
+            background-image: 
+                radial-gradient(circle at 15% 15%, rgba(255, 255, 255, 0.05) 0%, transparent 40%),
+                radial-gradient(circle at 85% 85%, rgba(203, 213, 225, 0.04) 0%, transparent 40%);
+            color: var(--text-main);
+            font-family: var(--font-main);
+            min-height: 100vh;
+            display: flex;
+            flex-direction: column;
+            overflow-x: hidden;
+        }
+
+        /* Top Header HUD */
+        header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 12px 24px;
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border-bottom: 1px solid var(--border-dim);
+            box-shadow: 0 4px 24px rgba(0, 0, 0, 0.4);
+            z-index: 100;
+        }
+
+        .brand-title {
+            display: flex;
+            align-items: center;
+            gap: 12px;
+        }
+
+        .logo-icon {
+            width: 44px;
+            height: 44px;
+            border-radius: 50%;
+            overflow: hidden;
+            flex-shrink: 0;
+            filter: drop-shadow(0 0 6px rgba(255,255,255,0.2));
+        }
+
+        .logo-icon img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+
+        .brand-text h1 {
+            font-size: 1.15rem;
+            font-weight: 800;
+            letter-spacing: 0.12em;
+            color: #fff;
+            text-transform: uppercase;
+        }
+
+        .brand-text span {
+            color: var(--cyan-main);
+        }
+
+        .status-pill {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--emerald-bright);
+            background: var(--emerald-glow);
+            padding: 4px 12px;
+            border-radius: 20px;
+            border: 1px solid var(--emerald-bright);
+            letter-spacing: 0.08em;
+        }
+
+        .status-dot {
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--emerald-bright);
+            box-shadow: 0 0 8px var(--emerald-bright);
+            animation: pulse-dot 1.8s infinite;
+        }
+
+        @keyframes pulse-dot {
+            0%, 100% { opacity: 1; transform: scale(1); }
+            50% { opacity: 0.4; transform: scale(1.3); }
+        }
+
+        .nav-tabs {
+            display: flex;
+            align-items: center;
+            gap: 8px;
+            background: rgba(0, 0, 0, 0.35);
+            padding: 4px;
+            border-radius: 8px;
+            border: 1px solid var(--border-dim);
+        }
+
+        .nav-tab {
+            display: flex;
+            align-items: center;
+            gap: 6px;
+            padding: 6px 14px;
+            border-radius: 6px;
+            font-family: var(--font-main);
+            font-size: 0.8rem;
+            font-weight: 700;
+            color: var(--text-muted);
+            text-decoration: none;
+            transition: all 0.2s ease;
+        }
+
+        .nav-tab:hover {
+            color: var(--cyan-main);
+            background: rgba(0, 242, 255, 0.08);
+        }
+
+        .nav-tab.active {
+            color: var(--cyan-main);
+            background: rgba(0, 242, 255, 0.12);
+            border: 1px solid var(--border-glow);
+            box-shadow: 0 0 10px rgba(0, 242, 255, 0.2);
+        }
+
+        .header-stats {
+            display: flex;
+            align-items: center;
+            gap: 20px;
+        }
+
+        .stat-badge {
+            text-align: right;
+            font-family: var(--font-mono);
+        }
+
+        .stat-badge .val {
+            font-size: 1.1rem;
+            font-weight: 700;
+            color: var(--cyan-main);
+        }
+
+        .stat-badge .lbl {
+            font-size: 0.68rem;
+            color: var(--text-muted);
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .clock-display {
+            font-family: var(--font-mono);
+            text-align: right;
+            border-left: 1px solid var(--border-dim);
+            padding-left: 20px;
+        }
+
+        .clock-time {
+            font-size: 1.15rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.05em;
+        }
+
+        .clock-date {
+            font-size: 0.7rem;
+            color: var(--text-muted);
+        }
+
+        /* Alert Ticker */
+        .ticker-bar {
+            background: rgba(13, 19, 34, 0.9);
+            border-bottom: 1px solid var(--border-dim);
+            padding: 6px 24px;
+            display: flex;
+            align-items: center;
+            gap: 16px;
+            overflow: hidden;
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+        }
+
+        .ticker-tag {
+            color: var(--rose-alert);
+            background: var(--rose-glow);
+            border: 1px solid var(--rose-alert);
+            padding: 2px 8px;
+            border-radius: 4px;
+            font-weight: 700;
+            letter-spacing: 0.1em;
+            flex-shrink: 0;
+        }
+
+        .ticker-text {
+            color: var(--text-main);
+            white-space: nowrap;
+            overflow: hidden;
+            text-overflow: ellipsis;
+            letter-spacing: 0.04em;
+        }
+
+        /* Main Workspace Grid */
+        .dashboard-grid {
+            display: grid;
+            grid-template-columns: 1fr 380px;
+            gap: 20px;
+            padding: 20px;
+            flex: 1;
+        }
+
+        /* Video Screen Panel */
+        .screen-panel {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            padding: 16px;
+            display: flex;
+            flex-direction: column;
+            gap: 16px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+            position: relative;
+        }
+
+        .video-viewport {
+            position: relative;
+            width: 100%;
+            border-radius: 10px;
+            overflow: hidden;
+            background: #000;
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            box-shadow: inset 0 0 30px rgba(0,0,0,0.8);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            min-height: 480px;
+        }
+
+        .video-stream {
+            width: 100%;
+            height: auto;
+            max-height: 600px;
+            object-fit: contain;
+            display: block;
+        }
+
+        /* CRT Overlay (Disabled) */
+        .scanlines {
+            display: none !important;
+            opacity: 0 !important;
+            pointer-events: none;
+        }
+
+        /* Reticle HUD overlay */
+        .viewport-hud {
+            position: absolute;
+            inset: 12px;
+            pointer-events: none;
+            display: flex;
+            flex-direction: column;
+            justify-content: space-between;
+        }
+
+        .hud-top, .hud-bottom {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+        }
+
+        .hud-chip {
+            background: rgba(6, 8, 16, 0.75);
+            border: 1px solid var(--border-dim);
+            backdrop-filter: blur(8px);
+            padding: 4px 10px;
+            border-radius: 6px;
+            font-family: var(--font-mono);
+            font-size: 0.7rem;
+            color: var(--cyan-main);
+            letter-spacing: 0.08em;
+        }
+
+        .viewport-controls {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 4px 0;
+        }
+
+        .btn-group {
+            display: flex;
+            gap: 10px;
+        }
+
+        .control-btn {
+            background: rgba(0, 242, 255, 0.06);
+            border: 1px solid var(--border-dim);
+            color: var(--text-main);
+            padding: 8px 14px;
+            border-radius: 6px;
+            font-family: var(--font-main);
+            font-size: 0.8rem;
+            font-weight: 600;
+            cursor: pointer;
+            transition: all 0.2s;
+            display: flex;
+            align-items: center;
+            gap: 6px;
+        }
+
+        .control-btn:hover {
+            background: rgba(0, 242, 255, 0.18);
+            border-color: var(--cyan-main);
+            color: var(--cyan-main);
+            box-shadow: 0 0 12px rgba(0, 242, 255, 0.2);
+        }
+
+        /* Sector Thumbnails Grid */
+        .camera-grid {
+            display: grid;
+            grid-template-columns: repeat(4, 1fr);
+            gap: 12px;
+        }
+
+        .cam-thumb {
+            background: var(--bg-card-solid);
+            border: 1px solid var(--border-dim);
+            border-radius: 8px;
+            padding: 8px;
+            cursor: pointer;
+            transition: all 0.25s;
+            position: relative;
+            overflow: hidden;
+        }
+
+        .cam-thumb:hover, .cam-thumb.active {
+            border-color: var(--cyan-main);
+            box-shadow: 0 0 14px rgba(0, 242, 255, 0.25);
+        }
+
+        .cam-thumb-title {
+            font-size: 0.75rem;
+            font-weight: 700;
+            color: var(--text-main);
+            margin-bottom: 4px;
+        }
+
+        .cam-thumb-sub {
+            font-family: var(--font-mono);
+            font-size: 0.65rem;
+            color: var(--text-muted);
+        }
+
+        .cam-badge {
+            position: absolute;
+            top: 6px;
+            right: 6px;
+            width: 6px;
+            height: 6px;
+            border-radius: 50%;
+            background: var(--emerald-bright);
+            box-shadow: 0 0 6px var(--emerald-bright);
+        }
+
+        /* Right Telemetry Column */
+        .side-column {
+            display: flex;
+            flex-direction: column;
+            gap: 20px;
+        }
+
+        .telemetry-card {
+            background: var(--bg-card);
+            backdrop-filter: blur(16px);
+            border: 1px solid var(--border-dim);
+            border-radius: 14px;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 14px;
+            box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
+        }
+
+        .card-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid var(--border-dim);
+            padding-bottom: 10px;
+        }
+
+        .card-header h2 {
+            font-size: 0.95rem;
+            font-weight: 700;
+            color: #fff;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+            display: flex;
+            align-items: center;
+            gap: 8px;
+        }
+
+        /* High-Tech Cyberpunk Person ID Card */
+        .hud-telemetry-card {
+            background: #090d16;
+            border: 2px solid #1a2538;
+            border-radius: 8px;
+            padding: 14px;
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+            font-family: var(--font-mono);
+            position: relative;
+            box-shadow: 0 10px 30px rgba(0, 0, 0, 0.7);
+            transition: border-color 0.3s, box-shadow 0.3s;
+        }
+
+        .hud-telemetry-card.verified {
+            border-color: var(--emerald-bright);
+            box-shadow: 0 0 20px rgba(0, 230, 118, 0.2);
+        }
+
+        .hud-telemetry-card.unknown {
+            border-color: var(--rose-alert);
+            box-shadow: 0 0 20px rgba(255, 42, 95, 0.25);
+        }
+
+        .hud-telemetry-card.scanning {
+            border-color: var(--amber-warn);
+            box-shadow: 0 0 20px rgba(255, 183, 0, 0.2);
+        }
+
+        .hud-card-top {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 8px;
+            font-size: 0.75rem;
+            letter-spacing: 0.08em;
+            color: #94a3b8;
+        }
+
+        .hud-card-prompt {
+            color: var(--cyan-main);
+            font-weight: 700;
+        }
+
+        .hud-card-body {
+            display: grid;
+            grid-template-columns: 110px 1fr;
+            gap: 12px;
+            align-items: start;
+        }
+
+        .hud-portrait-container {
+            position: relative;
+            width: 110px;
+            height: 110px;
+            background: #04060a;
+            border: 1px solid rgba(0, 242, 255, 0.25);
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            overflow: hidden;
+            border-radius: 6px;
+        }
+
+        .hud-portrait-img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+        }
+
+        .hud-corner {
+            position: absolute;
+            width: 6px;
+            height: 6px;
+            border-color: var(--cyan-main);
+            border-style: solid;
+            z-index: 2;
+        }
+
+        .hud-corner.top-left { top: 2px; left: 2px; border-width: 2px 0 0 2px; }
+        .hud-corner.top-right { top: 2px; right: 2px; border-width: 2px 2px 0 0; }
+        .hud-corner.bottom-left { bottom: 2px; left: 2px; border-width: 0 0 2px 2px; }
+        .hud-corner.bottom-right { bottom: 2px; right: 2px; border-width: 0 2px 2px 0; }
+
+        .hud-info-column {
+            display: flex;
+            flex-direction: column;
+            gap: 5px;
+        }
+
+        .hud-attr-title {
+            font-size: 0.7rem;
+            font-weight: 800;
+            color: var(--cyan-main);
+            letter-spacing: 0.12em;
+            margin-bottom: 2px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+            padding-bottom: 2px;
+        }
+
+        .info-row {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.68rem;
+        }
+
+        .info-lbl {
+            color: #94a3b8;
+            letter-spacing: 0.04em;
+        }
+
+        .info-val {
+            color: #ffffff;
+            font-weight: 700;
+            letter-spacing: 0.02em;
+        }
+
+        .info-val.access-badge {
+            color: var(--cyan-main);
+        }
+
+        .hud-match-block {
+            display: flex;
+            flex-direction: column;
+            gap: 4px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.06);
+            border-radius: 4px;
+            padding: 8px;
+        }
+
+        .meter-label {
+            display: flex;
+            justify-content: space-between;
+            font-size: 0.68rem;
+            color: #94a3b8;
+            font-weight: 700;
+        }
+
+        .bar-bg {
+            height: 8px;
+            background: rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            overflow: hidden;
+        }
+
+        .bar-fill {
+            height: 100%;
+            width: 0%;
+            background: linear-gradient(90deg, var(--cyan-dim), var(--emerald-bright));
+            transition: width 0.5s ease;
+        }
+
+        .bar-fill.warn {
+            background: linear-gradient(90deg, var(--amber-warn), #ffaa00);
+        }
+
+        .bar-fill.alert {
+            background: linear-gradient(90deg, var(--amber-warn), var(--rose-alert));
+        }
+
+        .hud-bio-block {
+            background: rgba(4, 6, 10, 0.85);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 4px;
+            padding: 8px 10px;
+            font-size: 0.7rem;
+            line-height: 1.4;
+        }
+
+        .hud-bio-header {
+            color: var(--cyan-main);
+            font-weight: 700;
+            margin-bottom: 4px;
+            letter-spacing: 0.08em;
+        }
+
+        .hud-bio-text {
+            color: #cbd5e1;
+            word-break: break-word;
+        }
+
+        .hud-card-footer {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.65rem;
+            color: var(--text-muted);
+            border-top: 1px solid rgba(255, 255, 255, 0.08);
+            padding-top: 6px;
+            letter-spacing: 0.08em;
+        }
+
+        /* Audit Stream Panel */
+        .audit-panel {
+            flex: 1;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+            max-height: 400px;
+        }
+
+        .search-box {
+            background: rgba(6, 8, 16, 0.8);
+            border: 1px solid var(--border-dim);
+            border-radius: 6px;
+            padding: 8px 12px;
+            color: var(--text-main);
+            font-family: var(--font-mono);
+            font-size: 0.75rem;
+            outline: none;
+            width: 100%;
+        }
+
+        .search-box:focus {
+            border-color: var(--cyan-main);
+        }
+
+        .audit-list {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            overflow-y: auto;
+            padding-right: 4px;
+            flex: 1;
+        }
+
+        .audit-item {
+            background: rgba(255, 255, 255, 0.03);
+            border-left: 3px solid var(--cyan-main);
+            border-radius: 6px;
+            padding: 10px 12px;
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.8rem;
+            cursor: pointer !important;
+            transition: transform 0.15s ease, background 0.15s ease, border-color 0.15s ease, box-shadow 0.15s ease;
+        }
+
+        .audit-item:hover {
+            transform: translateX(4px);
+            background: rgba(255, 255, 255, 0.1) !important;
+            box-shadow: 0 0 16px rgba(255, 255, 255, 0.2);
+        }
+
+        .audit-item * {
+            pointer-events: none;
+        }
+
+        .audit-item.unknown {
+            border-left-color: var(--rose-alert);
+            background: rgba(255, 42, 95, 0.05);
+        }
+
+        .audit-item.known {
+            border-left-color: var(--emerald-bright);
+        }
+
+        .audit-info {
+            display: flex;
+            flex-direction: column;
+            gap: 2px;
+        }
+
+        .audit-name {
+            font-weight: 700;
+            color: #fff;
+        }
+
+        .audit-time {
+            font-family: var(--font-mono);
+            font-size: 0.68rem;
+            color: var(--text-muted);
+        }
+
+        .audit-dist {
+            font-family: var(--font-mono);
+            font-size: 0.72rem;
+            color: var(--cyan-main);
+            font-weight: 700;
+        }
+
+        /* Clickable Person ID Card */
+        .clickable-card, .hud-telemetry-card {
+            cursor: pointer !important;
+            transition: transform 0.2s ease, border-color 0.2s ease, box-shadow 0.2s ease;
+        }
+
+        .clickable-card:hover, .hud-telemetry-card:hover {
+            transform: translateY(-2px);
+            border-color: #ffffff !important;
+            box-shadow: 0 0 25px rgba(255, 255, 255, 0.4) !important;
+        }
+
+        .hud-telemetry-card * {
+            pointer-events: none;
+        }
+
+        /* Classified Subject Intelligence Dossier Modal */
+        .dossier-modal-backdrop {
+            display: none;
+            position: fixed;
+            top: 0;
+            left: 0;
+            width: 100vw;
+            height: 100vh;
+            background: rgba(0, 0, 0, 0.92);
+            backdrop-filter: blur(16px);
+            z-index: 999999;
+            align-items: center;
+            justify-content: center;
+            padding: 20px;
+        }
+
+        #dossier-modal.active,
+        .dossier-modal-backdrop.active {
+            display: flex !important;
+            opacity: 1 !important;
+            visibility: visible !important;
+            pointer-events: auto !important;
+        }
+
+        .dossier-modal-card {
+            background: #080b12;
+            border: 2px solid #334155;
+            border-radius: 12px;
+            width: 100%;
+            max-width: 880px;
+            max-height: 90vh;
+            overflow-y: auto;
+            box-shadow: 0 20px 60px rgba(0, 0, 0, 0.9);
+            font-family: var(--font-mono);
+            display: flex;
+            flex-direction: column;
+        }
+
+        .dossier-modal-header {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 14px 20px;
+            background: #0f172a;
+            border-bottom: 1px solid #334155;
+        }
+
+        .dossier-header-title {
+            color: #ffffff;
+            font-weight: 800;
+            font-size: 0.82rem;
+            letter-spacing: 0.1em;
+        }
+
+        .dossier-close-btn {
+            background: rgba(255, 255, 255, 0.1);
+            border: 1px solid #475569;
+            color: #ffffff;
+            font-size: 1.2rem;
+            width: 30px;
+            height: 30px;
+            border-radius: 6px;
+            cursor: pointer;
+            display: flex;
+            align-items: center;
+            justify-content: center;
+            transition: background 0.2s;
+        }
+
+        .dossier-close-btn:hover {
+            background: #cbd5e1;
+            color: #000;
+        }
+
+        .dossier-modal-body {
+            display: grid;
+            grid-template-columns: 1fr 1.2fr;
+            gap: 20px;
+            padding: 20px;
+        }
+
+        @media (max-width: 768px) {
+            .dossier-modal-body {
+                grid-template-columns: 1fr;
+            }
+        }
+
+        .dossier-section-title {
+            font-size: 0.72rem;
+            font-weight: 800;
+            color: #94a3b8;
+            letter-spacing: 0.12em;
+            margin-bottom: 12px;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.1);
+            padding-bottom: 4px;
+        }
+
+        .dossier-image-reel {
+            display: grid;
+            grid-template-columns: repeat(auto-fill, minmax(120px, 1fr));
+            gap: 12px;
+        }
+
+        /* Medium Size Rectangle Face Photos (3:4 Aspect Ratio) */
+        .dossier-img-box {
+            position: relative;
+            aspect-ratio: 3 / 4;
+            background: #030508;
+            border: 1px solid #334155;
+            border-radius: 6px;
+            overflow: hidden;
+            display: flex;
+            flex-direction: column;
+        }
+
+        .dossier-img-box img {
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            filter: contrast(110%);
+        }
+
+        .dossier-img-label {
+            position: absolute;
+            bottom: 0;
+            left: 0;
+            right: 0;
+            background: rgba(0, 0, 0, 0.8);
+            color: #cbd5e1;
+            font-size: 0.62rem;
+            padding: 3px 5px;
+            text-align: center;
+            text-transform: uppercase;
+            border-top: 1px solid rgba(255, 255, 255, 0.1);
+        }
+
+        .dossier-info-col {
+            display: flex;
+            flex-direction: column;
+            gap: 12px;
+        }
+
+        .dossier-name-header {
+            font-size: 1.3rem;
+            font-weight: 900;
+            color: #ffffff;
+            letter-spacing: 0.08em;
+            text-transform: uppercase;
+        }
+
+        .dossier-grid {
+            display: flex;
+            flex-direction: column;
+            gap: 8px;
+            background: rgba(255, 255, 255, 0.02);
+            border: 1px solid rgba(255, 255, 255, 0.08);
+            border-radius: 8px;
+            padding: 12px;
+        }
+
+        .dossier-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            font-size: 0.73rem;
+            border-bottom: 1px dashed rgba(255, 255, 255, 0.06);
+            padding-bottom: 6px;
+        }
+
+        .dossier-item:last-child {
+            border-bottom: none;
+            padding-bottom: 0;
+        }
+
+        .d-lbl {
+            color: #94a3b8;
+            font-weight: 500;
+        }
+
+        .d-val {
+            color: #ffffff;
+            font-weight: 700;
+        }
+
+        .d-val.access-granted {
+            color: #ffffff;
+            background: rgba(255, 255, 255, 0.15);
+            padding: 2px 8px;
+            border-radius: 4px;
+            border: 1px solid rgba(255, 255, 255, 0.3);
+        }
+
+        .dossier-intel-block {
+            background: rgba(15, 23, 42, 0.8);
+            border: 1px solid #334155;
+            border-radius: 6px;
+            padding: 10px;
+            font-size: 0.7rem;
+            line-height: 1.5;
+        }
+
+        .d-intel-title {
+            color: #ffffff;
+            font-weight: 700;
+            margin-bottom: 4px;
+        }
+
+        .d-intel-text {
+            color: #cbd5e1;
+        }
+    </style>
+</head>
+<body>
+
+    <!-- Header HUD -->
+    <header>
+        <div class="brand-title">
+            <div class="logo-icon">
+                <img src="/logo.png" alt="Sleeper Agent Seal">
+            </div>
+            <div class="brand-text">
+                <h1>SLEEPER <span>AGENT</span></h1>
+            </div>
+        </div>
+
+
+
+
+        <div class="header-stats">
+            <div class="stat-badge">
+                <div class="val" id="stat-fps">0.0</div>
+                <div class="lbl">STREAM FPS</div>
+            </div>
+            <div class="stat-badge">
+                <div class="val" id="stat-profiles">0</div>
+                <div class="lbl">FAISS PROFILES</div>
+            </div>
+            <div class="stat-badge">
+                <div class="val" id="stat-tracks">0</div>
+                <div class="lbl">ACTIVE TRACKS</div>
+            </div>
+            <div class="clock-display">
+                <div class="clock-time" id="clock-time">00:00:00 ICT</div>
+                <div class="clock-date" id="clock-date">2026-08-03</div>
+            </div>
+        </div>
+    </header>
+
+
+
+    <!-- Main Workspace -->
+    <div class="dashboard-grid">
+        
+        <!-- Left: Primary Feed & Sector Switcher -->
+        <div class="screen-panel">
+            <div class="video-viewport" id="viewport-container">
+                <img id="video-feed" class="video-stream" src="/video_feed" alt="CCTV Stream">
+                
+                <div class="viewport-hud">
+                    <div class="hud-top">
+                        <div class="hud-chip">CAM-01 // MAIN ENTRANCE</div>
+                        <div class="hud-chip" id="resolution-chip">1080p AI STREAM</div>
+                    </div>
+                    <div class="hud-bottom">
+                        <div class="hud-chip" id="mode-chip">MODE: WEBSOCKET LOW LATENCY</div>
+                        <div class="hud-chip" id="rec-chip">● REC ACTIVE</div>
+                    </div>
+                </div>
+            </div>
+
+            <div class="viewport-controls">
+                <div class="btn-group">
+                    <button class="control-btn" id="btn-scanlines">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><line x1="3" y1="9" x2="21" y2="9"/><line x1="3" y1="15" x2="21" y2="15"/></svg>
+                        Scanlines
+                    </button>
+                    <button class="control-btn" id="btn-snapshot">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M23 19a2 2 0 0 1-2 2H3a2 2 0 0 1-2-2V8a2 2 0 0 1 2-2h4l2-3h6l2 3h4a2 2 0 0 1 2 2z"/><circle cx="12" cy="13" r="4"/></svg>
+                        Snapshot
+                    </button>
+                </div>
+                <div class="btn-group">
+                    <button class="control-btn" id="btn-fullscreen">
+                        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
+                        Fullscreen
+                    </button>
+                </div>
+            </div>
+
+            <!-- Multi-Channel Selector -->
+            <div class="camera-grid">
+                <div class="cam-thumb active">
+                    <div class="cam-badge"></div>
+                    <div class="cam-thumb-title">CAM-01</div>
+                    <div class="cam-thumb-sub">NORTH GATE [LIVE]</div>
+                </div>
+                <div class="cam-thumb">
+                    <div class="cam-thumb-title">CAM-02</div>
+                    <div class="cam-thumb-sub">EAST CORRIDOR</div>
+                </div>
+                <div class="cam-thumb">
+                    <div class="cam-thumb-title">CAM-03</div>
+                    <div class="cam-thumb-sub">PARKING DECK</div>
+                </div>
+                <div class="cam-thumb">
+                    <div class="cam-thumb-title">CAM-04</div>
+                    <div class="cam-thumb-sub">SERVER VAULT</div>
+                </div>
+            </div>
+        </div>
+
+        <!-- Right: Biometric Telemetry & Audit Stream -->
+        <div class="side-column">
+            <!-- Dynamic Multi-Person Telemetry Cards Container -->
+            <div id="telemetry-cards-container" style="display: flex; flex-direction: column; gap: 12px; max-height: 480px; overflow-y: auto;">
+                <!-- Telemetry Cards rendered dynamically for all detected persons -->
+            </div>        </div>
+
+            <!-- Audit Logs Stream -->
+            <div class="telemetry-card audit-panel">
+                <div class="card-header">
+                    <h2>
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="#00f2ff" stroke-width="2"><polyline points="22 12 18 12 15 21 9 3 6 12 2 12"/></svg>
+                        REAL-TIME AUDIT STREAM
+                    </h2>
+                </div>
+
+                <input type="text" class="search-box" id="audit-search" placeholder="Search audit logs by name or ID...">
+
+                <div class="audit-list" id="audit-list">
+                    <!-- Events will populate dynamically -->
+                </div>
+            </div>
+
+        </div>
+
+    </div>
+
+    <!-- JavaScript Engine -->
+    <script>
+        // Real-time Clock (Cambodia Timezone ICT / Asia/Phnom_Penh)
+        function updateClock() {
+            const now = new Date();
+            const timeOpts = { timeZone: 'Asia/Phnom_Penh', hour12: false, hour: '2-digit', minute: '2-digit', second: '2-digit' };
+            const dateOpts = { timeZone: 'Asia/Phnom_Penh', year: 'numeric', month: '2-digit', day: '2-digit' };
+            document.getElementById('clock-time').textContent = now.toLocaleTimeString('en-GB', timeOpts) + ' ICT';
+            document.getElementById('clock-date').textContent = now.toLocaleDateString('sv-SE', dateOpts);
+        }
+        setInterval(updateClock, 1000);
+        updateClock();
+
+        // Viewport Options
+        const scanlines = document.getElementById('scanlines-layer');
+        document.getElementById('btn-scanlines').addEventListener('click', () => {
+            scanlines.classList.toggle('off');
+        });
+
+        document.getElementById('btn-fullscreen').addEventListener('click', () => {
+            const container = document.getElementById('viewport-container');
+            if (!document.fullscreenElement) {
+                container.requestFullscreen().catch(err => alert(`Fullscreen error: ${err.message}`));
+            } else {
+                document.exitFullscreen();
+            }
+        });
+
+        document.getElementById('btn-snapshot').addEventListener('click', () => {
+            const img = document.getElementById('video-feed');
+            const canvas = document.createElement('canvas');
+            canvas.width = img.naturalWidth || 854;
+            canvas.height = img.naturalHeight || 480;
+            const ctx = canvas.getContext('2d');
+            ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+            const link = document.createElement('a');
+            link.download = `cctv_snapshot_${Date.now()}.png`;
+            link.href = canvas.toDataURL('image/png');
+            link.click();
+        });
+
+        // WebSocket Stream Connection
+        const videoImg = document.getElementById('video-feed');
+        const connText = document.getElementById('conn-status-text');
+        const modeChip = document.getElementById('mode-chip');
+        let ws = null;
+
+        function connectWebSocket() {
+            const protocol = window.location.protocol === 'https:' ? 'wss:' : 'ws:';
+            const wsUrl = `${protocol}//${window.location.host}/ws/video`;
+
+            ws = new WebSocket(wsUrl);
+
+            ws.onopen = () => {
+                if (connText) connText.textContent = "WEBSOCKET LIVE";
+                if (modeChip) modeChip.textContent = "MODE: WEBSOCKET LOW LATENCY";
+            };
+
+            ws.onmessage = (event) => {
+                try {
+                    const data = JSON.parse(event.data);
+                    if (data.image) {
+                        videoImg.src = data.image;
+                    }
+                    if (data.fps !== undefined) {
+                        document.getElementById('stat-fps').textContent = data.fps.toFixed(1);
+                    }
+                    if (data.active_tracks) {
+                        updateActiveTracks(data.active_tracks);
+                    }
+                } catch (e) {
+                    console.error("WS Parsing Error:", e);
+                }
+            };
+
+            let isUnloading = false;
+            window.addEventListener('beforeunload', () => { isUnloading = true; });
+
+            ws.onclose = () => {
+                if (isUnloading) return;
+                if (connText) connText.textContent = "HTTP STREAM FALLBACK";
+                if (modeChip) modeChip.textContent = "MODE: MJPEG HTTP STREAM";
+                videoImg.src = "/video_feed";
+                setTimeout(connectWebSocket, 3000);
+            };
+
+            ws.onerror = () => {
+                if (ws) ws.close();
+            };
+        }
+
+        connectWebSocket();
+
+        function setSegmentActive(barId, activeCount, colorClass) {
+            const bar = document.getElementById(barId);
+            if (!bar) return;
+            bar.className = `segment-bar ${colorClass || ''}`;
+            const segs = bar.querySelectorAll('.seg');
+            segs.forEach((seg, idx) => {
+                if (idx < activeCount) {
+                    seg.classList.add('active');
+                } else {
+                    seg.classList.remove('active');
+                }
+            });
+        }
+
+        let lastTrackSig = "";
+
+        // Active Tracks UI Telemetry - Multi-Person ID Card Renderer
+        function updateActiveTracks(tracks) {
+            document.getElementById('stat-tracks').textContent = tracks ? tracks.length : 0;
+            const container = document.getElementById('telemetry-cards-container');
+            if (!container) return;
+
+            const currentSig = JSON.stringify((tracks || []).map(t => [t.track_id, t.name]));
+            if (currentSig === lastTrackSig && container.children.length > 0) {
+                return; // Preserves DOM nodes from 30 FPS wiping to keep mouse clicks 100% reliable
+            }
+            lastTrackSig = currentSig;
+
+            const defaultSvg = "data:image/svg+xml;utf8,<svg xmlns='http://www.w3.org/2000/svg' width='110' height='110' viewBox='0 0 100 100'><rect width='100' height='100' fill='%2304060a'/><path d='M50 35 a15 15 0 1 0 0.1 0 M25 85 c0-20 10-25 25-25 s25 5 25 25' fill='none' stroke='%2300f2ff' stroke-width='2'/></svg>";
+
+            if (!tracks || tracks.length === 0) {
+                container.innerHTML = `
+                    <div class="hud-telemetry-card clickable-card" data-person-name="STANDBY" onclick="openDossierModalForName('STANDBY')" title="Click to view Standby Intelligence Status">
+                        <div class="hud-card-top">
+                            <div class="hud-card-prompt">&gt;PERSON_ID // STANDBY</div>
+                            <div class="hud-card-status"><span class="hud-access">ACCESS: <strong>STANDBY</strong></span></div>
+                        </div>
+                        <div class="hud-card-body">
+                            <div class="hud-portrait-container">
+                                <div class="hud-corner top-left"></div><div class="hud-corner top-right"></div>
+                                <div class="hud-corner bottom-left"></div><div class="hud-corner bottom-right"></div>
+                                <img src="${defaultSvg}" class="hud-portrait-img" alt="Standby">
+                            </div>
+                            <div class="hud-info-column">
+                                <div class="hud-attr-title">&gt; INFO ID</div>
+                                <div class="info-row"><span class="info-lbl">FULL NAME:</span><span class="info-val">SEARCHING...</span></div>
+                                <div class="info-row"><span class="info-lbl">OCCUPATION:</span><span class="info-val">—</span></div>
+                                <div class="info-row"><span class="info-lbl">PHONE NO:</span><span class="info-val">—</span></div>
+                                <div class="info-row"><span class="info-lbl">ADDRESS:</span><span class="info-val">—</span></div>
+                                <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge">STANDBY</span></div>
+                            </div>
+                        </div>
+                        <div class="hud-match-block">
+                            <div class="meter-label"><span>FACE MATCH CONFIDENCE</span><span>0.0%</span></div>
+                            <div class="bar-bg"><div class="bar-fill" style="width:0%"></div></div>
+                        </div>
+                    </div>
+                `;
+                return;
+            }
+
+            container.innerHTML = tracks.map(primary => {
+                const rawName = (primary.name || "").toUpperCase();
+                const isScanning = rawName.includes('SCANNING');
+                const isUnknown = rawName.includes('UNKNOWN');
+                const trackId = primary.track_id;
+                const meta = primary.meta || {};
+                const safeName = (primary.name || "").replace(/'/g, "\\'");
+
+                if (isScanning) {
+                    return `
+                        <div class="hud-telemetry-card clickable-card scanning" data-person-name="${safeName}" onclick="openDossierModalForName('${safeName}')">
+                            <div class="hud-card-top">
+                                <div class="hud-card-prompt">&gt;PERSON_ID #${trackId}</div>
+                                <div class="hud-card-status"><span class="hud-access">ACCESS: <strong style="color:var(--amber-warn)">PENDING</strong></span></div>
+                            </div>
+                            <div class="hud-card-body">
+                                <div class="hud-portrait-container">
+                                    <div class="hud-corner top-left"></div><div class="hud-corner top-right"></div>
+                                    <div class="hud-corner bottom-left"></div><div class="hud-corner bottom-right"></div>
+                                    <img src="${defaultSvg}" class="hud-portrait-img" alt="Scanning">
+                                </div>
+                                <div class="hud-info-column">
+                                    <div class="hud-attr-title">&gt; INFO ID (TRACK #${trackId})</div>
+                                    <div class="info-row"><span class="info-lbl">FULL NAME:</span><span class="info-val">SCANNING...</span></div>
+                                    <div class="info-row"><span class="info-lbl">OCCUPATION:</span><span class="info-val">CALCULATING...</span></div>
+                                    <div class="info-row"><span class="info-lbl">PHONE NO:</span><span class="info-val">—</span></div>
+                                    <div class="info-row"><span class="info-lbl">ADDRESS:</span><span class="info-val">—</span></div>
+                                    <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge" style="color:var(--amber-warn)">PENDING</span></div>
+                                </div>
+                            </div>
+                            <div class="hud-match-block">
+                                <div class="meter-label"><span>FACE MATCH CONFIDENCE</span><span>50.0%</span></div>
+                                <div class="bar-bg"><div class="bar-fill warn" style="width:50%"></div></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (isUnknown) {
+                    return `
+                        <div class="hud-telemetry-card clickable-card unknown" data-person-name="${safeName}" onclick="openDossierModalForName('${safeName}')">
+                            <div class="hud-card-top">
+                                <div class="hud-card-prompt">&gt;PERSON_ID #${trackId}</div>
+                                <div class="hud-card-status"><span class="hud-access">ACCESS: <strong style="color:var(--rose-alert)">DENIED</strong></span></div>
+                            </div>
+                            <div class="hud-card-body">
+                                <div class="hud-portrait-container">
+                                    <div class="hud-corner top-left"></div><div class="hud-corner top-right"></div>
+                                    <div class="hud-corner bottom-left"></div><div class="hud-corner bottom-right"></div>
+                                    <img src="${defaultSvg}" class="hud-portrait-img" alt="Unknown">
+                                </div>
+                                <div class="hud-info-column">
+                                    <div class="hud-attr-title">&gt; INFO ID (TRACK #${trackId})</div>
+                                    <div class="info-row"><span class="info-lbl">FULL NAME:</span><span class="info-val">UNKNOWN PERSON</span></div>
+                                    <div class="info-row"><span class="info-lbl">OCCUPATION:</span><span class="info-val">UNREGISTERED</span></div>
+                                    <div class="info-row"><span class="info-lbl">PHONE NO:</span><span class="info-val">N/A</span></div>
+                                    <div class="info-row"><span class="info-lbl">ADDRESS:</span><span class="info-val">N/A</span></div>
+                                    <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge" style="color:var(--rose-alert)">DENIED</span></div>
+                                </div>
+                            </div>
+                            <div class="hud-match-block">
+                                <div class="meter-label"><span>FACE MATCH CONFIDENCE</span><span>0.0%</span></div>
+                                <div class="bar-bg"><div class="bar-fill alert" style="width:5%"></div></div>
+                            </div>
+                        </div>
+                    `;
+                } else {
+                    const personName = primary.name;
+                    const dist = primary.match_distance || 0.45;
+                    const confidencePct = Math.max(75.0, Math.min(99.8, (1.0 - (dist / 2.0)) * 100)).toFixed(1);
+                    const avatarUrl = `/api/subject/avatar/${encodeURIComponent(personName)}?v=${Math.floor(Date.now() / 5000)}`;
+
+                    return `
+                        <div class="hud-telemetry-card clickable-card verified" data-person-name="${safeName}" onclick="openDossierModalForName('${safeName}')" title="Click to view ${personName}'s Intelligence Dossier">
+                            <div class="hud-card-top">
+                                <div class="hud-card-prompt">&gt;PERSON_ID #${trackId}</div>
+                                <div class="hud-card-status"><span class="hud-access">ACCESS: <strong>${meta.clearance || 'LEVEL 1'}</strong></span></div>
+                            </div>
+                            <div class="hud-card-body">
+                                <div class="hud-portrait-container">
+                                    <div class="hud-corner top-left"></div><div class="hud-corner top-right"></div>
+                                    <div class="hud-corner bottom-left"></div><div class="hud-corner bottom-right"></div>
+                                    <img src="${avatarUrl}" onerror="this.src='${defaultSvg}'" class="hud-portrait-img" alt="${personName}">
+                                </div>
+                                    <div class="hud-info-column">
+                                        <div class="hud-attr-title">&gt; INFO ID (${personName.toUpperCase()})</div>
+                                        <div class="info-row"><span class="info-lbl">FULL NAME:</span><span class="info-val">${personName.toUpperCase()}</span></div>
+                                        <div class="info-row"><span class="info-lbl">OCCUPATION:</span><span class="info-val">${meta.occupation || 'REGISTERED SUBJECT'}</span></div>
+                                        <div class="info-row"><span class="info-lbl">PHONE NO:</span><span class="info-val">${meta.phone || 'N/A'}</span></div>
+                                        <div class="info-row"><span class="info-lbl">ADDRESS:</span><span class="info-val">${meta.address || 'N/A'}</span></div>
+                                        <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge" style="color:var(--emerald-bright)">${meta.clearance || 'LEVEL 1 GRANTED'}</span></div>
+                                    </div>
+                            </div>
+                            <div class="hud-match-block">
+                                <div class="meter-label"><span>FACE MATCH CONFIDENCE</span><span>${confidencePct}%</span></div>
+                                <div class="bar-bg"><div class="bar-fill" style="width:${confidencePct}%"></div></div>
+                            </div>
+                        </div>
+                    `;
+                }
+            }).join('');
+        }
+
+
+        // Audit Events Polling
+        let allAuditEvents = [];
+
+        async function fetchAuditEvents() {
+            try {
+                const res = await fetch('/api/events');
+                if (!res.ok) return;
+                const data = await res.json();
+                
+                if (data.total_profiles !== undefined) {
+                    document.getElementById('stat-profiles').textContent = data.total_profiles;
+                }
+                if (data.events) {
+                    allAuditEvents = data.events;
+                    renderAuditList();
+                    if (data.events.length > 0) {
+                        const top = data.events[0];
+                        const tick = document.getElementById('ticker-text');
+                        if (tick) {
+                            tick.textContent = `[${top.timestamp}] DETECTED: ${top.person_name.toUpperCase()} (TRACK #${top.track_id}, L2 DIST: ${top.match_distance.toFixed(3)})`;
+                        }
+                    }
+                }
+            } catch (e) {
+                console.error("Audit polling warning:", e);
+            }
+        }
+
+        function renderAuditList() {
+            const listEl = document.getElementById('audit-list');
+            const searchVal = document.getElementById('audit-search').value.toLowerCase();
+            
+            const filtered = allAuditEvents.filter(e => 
+                e.person_name.toLowerCase().includes(searchVal) || 
+                String(e.track_id).includes(searchVal)
+            );
+
+            listEl.innerHTML = filtered.map(e => {
+                const isUnknown = e.person_name.toUpperCase().includes('UNKNOWN');
+                const safeName = e.person_name.replace(/'/g, "\\'");
+                return `
+                    <div class="audit-item ${isUnknown ? 'unknown' : 'known'}" onclick="openDossierModalForName('${safeName}')" title="Click to view ${e.person_name}'s Intelligence Dossier">
+                        <div class="audit-info">
+                            <span class="audit-name">${e.person_name}</span>
+                            <span class="audit-time">${e.timestamp} · Track #${e.track_id}</span>
+                        </div>
+                        <span class="audit-dist">${e.match_distance.toFixed(3)}</span>
+                    </div>
+                `;
+            }).join('');
+        }
+
+        document.getElementById('audit-search').addEventListener('input', renderAuditList);
+        setInterval(fetchAuditEvents, 1500);
+        fetchAuditEvents();
+
+        // Attach click handler for Person ID cards container
+        const cardsContainer = document.getElementById('telemetry-cards-container');
+        // Global capture listener for Person ID telemetry cards
+        document.addEventListener('click', function(e) {
+            const card = e.target.closest('.hud-telemetry-card, .clickable-card, #identity-box');
+            if (card) {
+                const name = card.getAttribute('data-person-name');
+                openDossierModalForName(name || "Ceaser");
+            }
+        }, true);
+
+        // Subject Intelligence Dossier Modal Logic
+        function openDossierModalForName(name) {
+            const targetName = (name && name.trim()) ? name.trim() : "UNKNOWN PERSON";
+            
+            const modal = document.getElementById('dossier-modal');
+            if (modal) {
+                modal.classList.add('active');
+                modal.style.setProperty('display', 'flex', 'important');
+                modal.style.setProperty('opacity', '1', 'important');
+                modal.style.setProperty('visibility', 'visible', 'important');
+                modal.style.setProperty('pointer-events', 'auto', 'important');
+            }
+
+            const titleEl = document.getElementById('modal-subject-name');
+            if (titleEl) titleEl.textContent = targetName.toUpperCase();
+            
+            fetch(`/api/subject/${encodeURIComponent(targetName)}`)
+                .then(res => res.json())
+                .then(data => {
+                    if (data.status === "success") {
+                        const meta = data.meta || {};
+                        const fn = document.getElementById('modal-fullname');
+                        if (fn) fn.textContent = (meta.name || targetName).toUpperCase();
+                        const dob = document.getElementById('modal-dob');
+                        if (dob) dob.textContent = meta.dob || "NOT SPECIFIED";
+                        const occ = document.getElementById('modal-occupation');
+                        if (occ) occ.textContent = meta.occupation || "UNREGISTERED";
+                        const ph = document.getElementById('modal-phone');
+                        if (ph) ph.textContent = meta.phone || "N/A";
+                        const ad = document.getElementById('modal-address');
+                        if (ad) ad.textContent = meta.address || "N/A";
+                        
+                        const ac = document.getElementById('modal-access');
+                        if (ac) {
+                            const clearanceText = meta.clearance || "ACCESS DENIED";
+                            ac.textContent = clearanceText;
+                            if (clearanceText.includes("DENIED")) {
+                                ac.style.color = "var(--rose-alert)";
+                            } else if (clearanceText.includes("PENDING")) {
+                                ac.style.color = "var(--amber-warn)";
+                            } else {
+                                ac.style.color = "var(--emerald-bright)";
+                            }
+                        }
+                        
+                        const gallery = document.getElementById('dossier-gallery');
+                        if (gallery) {
+                            gallery.innerHTML = '';
+                            if (data.images && data.images.length > 0) {
+                                data.images.forEach(imgObj => {
+                                    const box = document.createElement('div');
+                                    box.className = 'dossier-img-box';
+                                    box.innerHTML = `
+                                        <img src="${imgObj.url}" alt="${imgObj.filename}">
+                                        <div class="dossier-img-label">${imgObj.filename.replace(/\.[^/.]+$/, "")}</div>
+                                    `;
+                                    gallery.appendChild(box);
+                                });
+                            } else {
+                                gallery.innerHTML = `
+                                    <div class="dossier-img-box">
+                                        <img src="/api/subject/avatar/${encodeURIComponent(targetName)}" onerror="this.src='/logo.png'">
+                                        <div class="dossier-img-label">SYSTEM AVATAR</div>
+                                    </div>
+                                `;
+                            }
+                        }
+                        
+                        const intel = document.getElementById('modal-intel-text');
+                        if (intel) {
+                            const isUnknown = targetName.toUpperCase().includes("UNKNOWN");
+                            const isScanning = targetName.toUpperCase().includes("SCANNING");
+                            if (isUnknown) {
+                                intel.innerHTML = `
+                                    FAISS INDEX SEARCH: UNREGISTERED TARGET.<br>
+                                    IDENTITY NOT FOUND IN FAISS DATABASE.<br>
+                                    RECOMMENDED ACTION: ENROLL SUBJECT VIA /enroll_
+                                `;
+                            } else if (isScanning) {
+                                intel.innerHTML = `
+                                    CAPTURING FACIAL EMBEDDINGS...<br>
+                                    TEMPORAL CONSENSUS VOTING IN PROGRESS...<br>
+                                    STANDBY FOR FAISS MATCH RESULT_
+                                `;
+                            } else {
+                                intel.innerHTML = `
+                                    FAISS 512D VECTOR EMBEDDING VERIFIED.<br>
+                                    PROFILE DATA RECORDED IN FAISS INDEX.<br>
+                                    MULTI-POSE ENROLLMENT: ${data.images ? data.images.length : 1} TEMPLATES STORED.<br>
+                                    SECURITY CLEARANCE: APPROVED_
+                                `;
+                            }
+                        }
+                    }
+                })
+                .catch(e => console.error("Dossier Fetch Error:", e));
+        }
+
+        function openDossierModal() {
+            const fullNameEl = document.getElementById('info-fullname');
+            const nameToFetch = fullNameEl ? fullNameEl.textContent.trim() : "Ceaser";
+            openDossierModalForName(nameToFetch);
+        }
+
+        function closeDossierModal() {
+            const modal = document.getElementById('dossier-modal');
+            if (modal) {
+                modal.style.setProperty('display', 'none', 'important');
+                modal.style.setProperty('opacity', '0', 'important');
+                modal.style.setProperty('visibility', 'hidden', 'important');
+                modal.style.setProperty('pointer-events', 'none', 'important');
+                modal.classList.remove('active');
+            }
+        }
+
+        window.openDossierModal = openDossierModal;
+        window.openDossierModalForName = openDossierModalForName;
+        window.closeDossierModal = closeDossierModal;
+    </script>
+
+    <!-- Classified Subject Intelligence Dossier Modal -->
+    <div class="dossier-modal-backdrop" id="dossier-modal" onclick="closeDossierModal()">
+        <div class="dossier-modal-card" onclick="event.stopPropagation()">
+            <div class="dossier-modal-header">
+                <div class="dossier-header-title">&gt;CLASSIFIED_DOSSIER // SLEEPER_AGENT_INTEL</div>
+                <button class="dossier-close-btn" onclick="closeDossierModal()">&times;</button>
+            </div>
+
+            <div class="dossier-modal-body">
+                <!-- Left Column: Medium Rectangle Multi-Angle Photo Reel (3:4 ratio) -->
+                <div class="dossier-gallery-col">
+                    <div class="dossier-section-title">&gt; MULTI-ANGLE FACE IMAGES</div>
+                    <div class="dossier-image-reel" id="dossier-gallery">
+                        <!-- Rendered dynamically -->
+                    </div>
+                </div>
+
+                <!-- Right Column: Detailed Intelligence Stats -->
+                <div class="dossier-info-col">
+                    <div class="dossier-section-title">&gt; SUBJECT SPECIFICATIONS</div>
+                    <div class="dossier-name-header" id="modal-subject-name">SUBJECT DOSSIER</div>
+
+                    <div class="dossier-grid">
+                        <div class="dossier-item">
+                            <span class="d-lbl">FULL NAME:</span>
+                            <span class="d-val" id="modal-fullname">SELECT SUBJECT</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">DATE OF BIRTH:</span>
+                            <span class="d-val" id="modal-dob">NOT SPECIFIED</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">OCCUPATION:</span>
+                            <span class="d-val" id="modal-occupation">UNREGISTERED</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">PHONE NUMBER:</span>
+                            <span class="d-val" id="modal-phone">N/A</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">ADDRESS:</span>
+                            <span class="d-val" id="modal-address">N/A</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">ACCESS LEVEL:</span>
+                            <span class="d-val access-granted" id="modal-access">PENDING EVALUATION</span>
+                        </div>
+                    </div>
+
+                    <div class="dossier-intel-block">
+                        <div class="d-intel-title">&gt; BIOMETRIC VERIFICATION LOG:</div>
+                        <div class="d-intel-text" id="modal-intel-text">
+                            SYSTEM STANDBY.<br>
+                            SELECT A SUBJECT CARD TO VIEW INTELLIGENCE DOSSIER_
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+</body>
+</html>

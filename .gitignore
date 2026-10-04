@@ -27,6 +27,12 @@ data/dataset/
 data/faces.index
 data/metadata.json
 *.log
+*.sqlite
+*.sqlite3
+.env
+.env.*
+.env.local
 
 # Temporary / testing outputs
 stress_occlusion.mp4
+

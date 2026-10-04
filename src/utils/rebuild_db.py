@@ -19,7 +19,7 @@ from src.utils.face_align import YuNetFaceAligner
 from deepface import DeepFace
 import faiss
 
-def rebuild_biometric_database(rename_ceo_to_ceaser=True):
+def rebuild_biometric_database():
     print("=" * 65)
     print("  BIOMETRIC DATABASE REBUILD & MULTI-TEMPLATE INDEXER")
     print("=" * 65)
@@ -27,27 +27,6 @@ def rebuild_biometric_database(rename_ceo_to_ceaser=True):
     if not os.path.exists(KNOWN_FACES_DIR):
         print(f"[ERROR] Directory '{KNOWN_FACES_DIR}' not found.")
         return
-
-    # Check if CEO_OF_SEX folder should be renamed to Ceaser
-    old_ceo_dir = os.path.join(KNOWN_FACES_DIR, "CEO_OF_SEX")
-    ceaser_dir = os.path.join(KNOWN_FACES_DIR, "Ceaser")
-    
-    if rename_ceo_to_ceaser and os.path.exists(old_ceo_dir):
-        if not os.path.exists(ceaser_dir):
-            os.rename(old_ceo_dir, ceaser_dir)
-            print(f"[RENAME] Renamed 'known_faces/CEO_OF_SEX' -> 'known_faces/Ceaser'")
-        else:
-            # Move files if destination already exists
-            for fname in os.listdir(old_ceo_dir):
-                src_p = os.path.join(old_ceo_dir, fname)
-                dst_p = os.path.join(ceaser_dir, fname)
-                if not os.path.exists(dst_p):
-                    os.rename(src_p, dst_p)
-            try:
-                os.rmdir(old_ceo_dir)
-            except Exception:
-                pass
-            print(f"[MERGE] Merged 'known_faces/CEO_OF_SEX' into 'known_faces/Ceaser'")
 
     # Initialize ArcFace model & YuNet aligner
     print("[INIT] Loading YuNet face aligner and ArcFace embedding model...")

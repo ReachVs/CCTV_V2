@@ -1402,7 +1402,7 @@
             const card = e.target.closest('.hud-telemetry-card, .clickable-card, #identity-box');
             if (card) {
                 const name = card.getAttribute('data-person-name');
-                openDossierModalForName(name || "Ceaser");
+                openDossierModalForName(name || "UNKNOWN");
             }
         }, true);
 
@@ -1506,7 +1506,7 @@
 
         function openDossierModal() {
             const fullNameEl = document.getElementById('info-fullname');
-            const nameToFetch = fullNameEl ? fullNameEl.textContent.trim() : "Ceaser";
+            const nameToFetch = fullNameEl ? fullNameEl.textContent.trim() : "UNKNOWN";
             openDossierModalForName(nameToFetch);
         }
 

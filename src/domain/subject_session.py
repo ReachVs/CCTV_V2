@@ -62,7 +62,7 @@ class SubjectSession:
         elif self.status == TrackStatus.UNKNOWN:
             return "Unknown Person"
         else:
-            return f"Scanning Track {self.track_id}"
+            return self.identity_name or f"Scanning Track {self.track_id}"
 
     @property
     def is_confirmed(self) -> bool:

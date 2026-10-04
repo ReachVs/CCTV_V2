@@ -257,18 +257,67 @@ class BiometricTrackingEngine:
 
     def _get_or_create_session(self, track_id: int, box: Tuple[int, int, int, int], frame_num: int) -> SubjectSession:
         if track_id not in self._sessions:
+            first_seen = self.track_first_seen.get(track_id, frame_num)
             session = SubjectSession(
                 track_id=track_id,
-                first_seen=frame_num,
+                first_seen=first_seen,
                 last_seen=frame_num,
                 box=box
             )
+            # Synchronize pre-seeded states from legacy dictionaries if injected by external tests
+            if track_id in self.track_cache:
+                t_c = self.track_cache[track_id]
+                if t_c.get("is_confirmed", False):
+                    name = t_c.get("name", "")
+                    if name == "Unknown Person":
+                        session.mark_unknown()
+                    else:
+                        session.confirm_identity(name, t_c.get("best_dist", 0.5), t_c.get("best_norm", 1.0))
+                elif t_c.get("name"):
+                    session.identity_name = t_c.get("name")
+                session.history = list(t_c.get("history", []))
+                session.valid_face_crops = t_c.get("valid_face_crops", 0)
+                session.failed_attempts = t_c.get("failed_attempts", 0)
+                session.attempts = t_c.get("attempts", 0)
+            elif track_id in self.active_tracks:
+                name = self.active_tracks[track_id]
+                if not name.startswith("Scanning") and not name.startswith("Unverified") and not name.startswith("Contended") and name not in ["Unknown", "Unknown Person", "Ambiguous Match"]:
+                    session.confirm_identity(name, 0.5, 1.0)
+                elif name.startswith("Unverified"):
+                    session.mark_unverified()
+                elif name == "Unknown Person":
+                    session.mark_unknown()
+                elif name.startswith("Contended"):
+                    session.status = TrackStatus.CONTENDED
+                else:
+                    session.identity_name = name
             self._sessions[track_id] = session
         else:
             session = self._sessions[track_id]
             session.last_seen = frame_num
             session.box = box
+            # If external test mutated track_cache or active_tracks, sync changes into session
+            if track_id in self.track_cache:
+                t_c = self.track_cache[track_id]
+                if t_c.get("is_confirmed", False) and not session.is_confirmed:
+                    name = t_c.get("name", "")
+                    if name == "Unknown Person":
+                        session.mark_unknown()
+                    else:
+                        session.confirm_identity(name, t_c.get("best_dist", 0.5), t_c.get("best_norm", 1.0))
+                if "history" in t_c and t_c["history"] != session.history:
+                    session.history = list(t_c["history"])
         return session
+
+    def get_session(self, track_id: int) -> Optional[SubjectSession]:
+        """Thread-safe retrieval of a specific active SubjectSession."""
+        with self.lock:
+            return self._sessions.get(track_id)
+
+    def get_all_sessions(self) -> Dict[int, SubjectSession]:
+        """Thread-safe snapshot of all active SubjectSession instances."""
+        with self.lock:
+            return dict(self._sessions)
 
     # -----------------------------------------------------------------
     # Initializers & Index Management
@@ -577,6 +626,8 @@ class BiometricTrackingEngine:
                         self.contended_tracks[c_tid] += 1
                         if self.contended_tracks[c_tid] >= 3:
                             del self.contended_tracks[c_tid]
+                            if c_tid in self._sessions:
+                                self._sessions[c_tid].reset_contention()
                     else:
                         self.contended_tracks[c_tid] = 0
                 else:
@@ -595,6 +646,8 @@ class BiometricTrackingEngine:
                         for tid in (tid1, tid2):
                             self.contended_tracks[tid] = 0
                             self.contention_blacklist[tid] = current_frame_num + 45
+                            session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
+                            session.enter_contention(blacklist_expiration_frame=current_frame_num + 45)
                             t_cache = self.track_cache.setdefault(tid, {})
                             if t_cache.get("is_confirmed", False) or not self.active_tracks.get(tid, "").startswith("Scanning"):
                                 t_cache["is_confirmed"] = False
@@ -630,20 +683,9 @@ class BiometricTrackingEngine:
                     self.active_tracks[track_id] = f"Pose Target {track_id}"
                     self.track_keypoints[track_id] = kpts
 
-                subject = TrackedSubject(
-                    track_id=track_id,
-                    name=f"Pose Target {track_id}",
-                    confidence=1.0,
-                    box=curr_box,
-                    is_confirmed=True,
-                    is_scanning=False,
-                    is_unknown=False,
-                    status=TrackStatus.POSE_TARGET.value,
-                    keypoints=kpts
-                )
                 session = self._get_or_create_session(track_id, curr_box, current_frame_num)
                 session.mark_pose(kpts)
-                active_subject_list.append(subject)
+                active_subject_list.append(session.to_tracked_subject())
                 continue
 
             # Standard Biometric Identification Branch
@@ -768,23 +810,15 @@ class BiometricTrackingEngine:
             session = self._get_or_create_session(track_id, curr_box, current_frame_num)
             session.status = TrackStatus(curr_status)
             session.confidence = 0.85 if is_confirmed else 0.50
-            session.identity_name = subject_name if is_confirmed and not is_unknown else ""
+            session.identity_name = subject_name if is_confirmed and not is_unknown else (subject_name if not is_scanning else "")
+            session.keypoints = self.track_keypoints.get(track_id)
             session.meta = meta_dict
 
-            subject = TrackedSubject(
-                track_id=track_id,
-                name=subject_name,
-                confidence=0.85 if is_confirmed else 0.50,
-                box=curr_box,
-                is_confirmed=is_confirmed,
-                is_scanning=is_scanning,
-                is_unknown=is_unknown,
-                is_contended=is_contended_flag,
-                status=curr_status,
-                keypoints=self.track_keypoints.get(track_id),
-                meta=meta_dict
-            )
-            active_subject_list.append(subject)
+            # Keep legacy cache and active track dictionaries in sync
+            self.track_cache[track_id] = session.to_cache_dict()
+            self.active_tracks[track_id] = session.display_name
+
+            active_subject_list.append(session.to_tracked_subject(meta=meta_dict))
 
         # 5. Purge Expired Tracks (> 60 frames dead, or persistent headless phantom > 45 frames)
         with self.lock:
@@ -1021,6 +1055,8 @@ class BiometricTrackingEngine:
                             track["name"] = most_common
                             track["is_confirmed"] = True
                             self.active_identity_claims[most_common] = track_id
+                            if track_id in self._sessions:
+                                self._sessions[track_id].confirm_identity(most_common, d1, current_norm)
                         else:
                             track["name"] = "Ambiguous Match"
 
@@ -1028,6 +1064,16 @@ class BiometricTrackingEngine:
             if not track["is_confirmed"] and track["valid_face_crops"] >= 3:
                 track["name"] = "Unknown Person"
                 track["is_confirmed"] = True
+                if track_id in self._sessions:
+                    self._sessions[track_id].mark_unknown()
+
+            if track_id in self._sessions:
+                session = self._sessions[track_id]
+                session.attempts = track["attempts"]
+                session.valid_face_crops = track["valid_face_crops"]
+                session.failed_attempts = track["failed_attempts"]
+                session.history = list(track["history"])
+                session.best_norm = track["best_norm"]
 
             current_display = track["name"] if track["is_confirmed"] else matched_name
             if current_display in ["Unknown", "Unknown Person", "Ambiguous Match"] and len(track["history"]) > 0:
@@ -1136,10 +1182,14 @@ class BiometricTrackingEngine:
 
             if emb is None:
                 t_cache["failed_attempts"] = t_cache.get("failed_attempts", 0) + 1
+                if track_id in self._sessions:
+                    self._sessions[track_id].failed_attempts = t_cache["failed_attempts"]
                 if not t_cache.get("is_confirmed", False):
                     self.active_tracks.setdefault(track_id, f"Scanning Track {track_id}")
                 if t_cache["failed_attempts"] >= 3:
                     self.limb_cooldowns[track_id] = self.frame_count + 10
+                    if track_id in self._sessions:
+                        self._sessions[track_id].limb_cooldown_until = self.frame_count + 10
                 return
 
             track_age = (self.frame_count - self.track_first_seen.get(track_id, self.frame_count)) + 1
@@ -1154,6 +1204,15 @@ class BiometricTrackingEngine:
                 display_name = "Unknown Person"
 
             self.active_tracks[track_id] = display_name
+            if track_id in self._sessions:
+                session = self._sessions[track_id]
+                session.failed_attempts = 0
+                if display_name == "Unknown Person":
+                    session.mark_unknown()
+                elif not display_name.startswith("Scanning") and not display_name.startswith("Unverified") and not display_name.startswith("Contended"):
+                    session.confirm_identity(display_name, telemetry.get("dist1", 0.5), telemetry.get("norm", 1.0))
+                else:
+                    session.identity_name = display_name
 
             if telemetry.get("confirmed") and display_name not in ["Unknown", "Ambiguous Match", "Unknown Person"]:
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")

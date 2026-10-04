@@ -40,4 +40,7 @@ The cohesive domain entity encapsulating the complete lifecycle, temporal boundi
 ### TrackStatus
 The explicit lifecycle state machine enum (`SCANNING`, `CONFIRMED`, `CONTENDED`, `UNVERIFIED`, `UNKNOWN`, `POSE_TARGET`) governing biometric gating, HUD visualization color palettes, and identity locking transitions without string-parsing heuristics.
 
+### PersonDetector
+The explicit motion and person detection seam (`PersonDetector`, `UltralyticsPersonDetector`, `ScriptedPersonDetector`, `DetectedBox`). Decouples `BiometricTrackingEngine` from Ultralytics YOLO models and encapsulates traditional Haar cascade fallback. Enables hermetic, model-free unit testing without monkeypatching private engine internals.
+
 

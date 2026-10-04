@@ -32,6 +32,12 @@ from src.utils.face_align import YuNetFaceAligner
 from src.utils.fsrcnn_upscaler import FSRCNNUpscaler
 from src.rendering.annotator import FrameAnnotator
 from src.domain.subject_session import SubjectSession, TrackStatus
+from src.inference.person_detector import (
+    PersonDetector,
+    UltralyticsPersonDetector,
+    ScriptedPersonDetector,
+    DetectedBox,
+)
 from src.utils.privacy_compliance import (
     GDPRMemorySanitizer,
     PoseOnlyEstimator,
@@ -142,6 +148,7 @@ class BiometricTrackingEngine:
     def __init__(
         self,
         index_adapter: Optional[VectorIndexAdapter] = None,
+        detector: Optional[PersonDetector] = None,
         index_path: Optional[str] = None,
         metadata_path: Optional[str] = None,
         db_path: Optional[str] = None,
@@ -182,9 +189,14 @@ class BiometricTrackingEngine:
         if not os.path.exists(self.bytetrack_cfg):
             self.bytetrack_cfg = "bytetrack.yaml"
 
-        self._yolo_model = None
-        self._haar_cascade = None
-        self._init_yolo()
+        # Person Detector Seam (Ultralytics + ByteTrack + Haar or Scripted test adapter)
+        if detector is not None:
+            self.detector = detector
+        else:
+            self.detector = UltralyticsPersonDetector(
+                tracker_cfg=self.bytetrack_cfg,
+                enable_haar=True
+            )
 
         self.jitter_engine = JitterFilterEngine(erratic_threshold=80.0)
         self.face_aligner = YuNetFaceAligner()
@@ -272,24 +284,35 @@ class BiometricTrackingEngine:
     def ntotal(self) -> int:
         return self.index_adapter.ntotal
 
-    def _init_yolo(self):
-        try:
-            if YOLO is not None:
-                detector_path = DEFAULT_MODEL_CONFIG.get_effective_detection_model()
-                self._yolo_model = YOLO(detector_path)
-                dummy = np.zeros((360, 640, 3), dtype=np.uint8)
-                try:
-                    self._yolo_model.track(dummy, persist=True, classes=[0], tracker=self.bytetrack_cfg, verbose=False)
-                except Exception:
-                    pass
-        except Exception as e:
-            print(f"[BiometricEngine Warning] YOLO initialization: {e}")
+    @property
+    def _yolo_model(self) -> Any:
+        return getattr(self.detector, "yolo_model", None)
 
-        try:
-            self._haar_cascade = cv2.CascadeClassifier(cv2.data.haarcascades + 'haarcascade_frontalface_default.xml')
-        except Exception as e:
-            self._haar_cascade = None
-            print(f"[BiometricEngine Warning] Haar cascade initialization: {e}")
+    @_yolo_model.setter
+    def _yolo_model(self, model: Any) -> None:
+        if isinstance(self.detector, UltralyticsPersonDetector):
+            self.detector.yolo_model = model
+        elif isinstance(self.detector, ScriptedPersonDetector):
+            self.detector.set_detections(model)
+        else:
+            self.detector = UltralyticsPersonDetector(
+                yolo_model=model,
+                tracker_cfg=self.bytetrack_cfg,
+                enable_haar=False
+            )
+
+    @property
+    def _haar_cascade(self) -> Any:
+        return getattr(self.detector, "haar_cascade", None)
+
+    @_haar_cascade.setter
+    def _haar_cascade(self, cascade: Any) -> None:
+        if hasattr(self.detector, "haar_cascade"):
+            self.detector.haar_cascade = cascade
+
+    def _init_yolo(self):
+        if not hasattr(self, "detector") or self.detector is None:
+            self.detector = UltralyticsPersonDetector(tracker_cfg=self.bytetrack_cfg, enable_haar=True)
 
     def _init_embedder_model(self):
         try:
@@ -420,58 +443,15 @@ class BiometricTrackingEngine:
         small_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
         annotated = frame.copy() if annotate else frame
 
-        boxes_list: List[List[float]] = []
-        confs_list: List[float] = []
-        track_ids_list: List[int] = []
-
-        # 1. Motion Tracking
-        if self._yolo_model is not None:
-            try:
-                results = self._yolo_model.track(
-                    small_frame,
-                    conf=0.25,
-                    persist=True,
-                    classes=[0],
-                    tracker=self.bytetrack_cfg,
-                    verbose=False
-                )
-                for res in results:
-                    if res.boxes is not None and len(res.boxes) > 0:
-                        b = res.boxes.xyxy.cpu().numpy()
-                        c = res.boxes.conf.cpu().numpy() if res.boxes.conf is not None else [1.0] * len(b)
-                        if res.boxes.id is not None:
-                            t = res.boxes.id.cpu().numpy().astype(int)
-                        else:
-                            t = list(range(1, len(b) + 1))
-                        for i in range(len(b)):
-                            boxes_list.append(b[i])
-                            confs_list.append(c[i])
-                            track_ids_list.append(t[i])
-            except Exception:
-                pass
-
-        # Haar cascade fallback when no bodies are tracked
-        if len(boxes_list) == 0 and self._haar_cascade is not None:
-            try:
-                gray_small = cv2.cvtColor(small_frame, cv2.COLOR_BGR2GRAY)
-                faces = self._haar_cascade.detectMultiScale(gray_small, scaleFactor=1.2, minNeighbors=4, minSize=(35, 35))
-                if len(faces) > 0:
-                    for idx_f, (hx, hy, hw, hh) in enumerate(faces):
-                        pad_h = int(hh * 0.4)
-                        pad_w = int(hw * 0.3)
-                        bx1 = max(0, hx - pad_w)
-                        by1 = max(0, hy - pad_h)
-                        bx2 = min(target_w, hx + hw + pad_w)
-                        by2 = min(target_h, hy + hh + int(pad_h * 2))
-                        boxes_list.append([bx1, by1, bx2, by2])
-                        confs_list.append(0.85)
-                        track_ids_list.append(idx_f + 1)
-            except Exception:
-                pass
+        # 1. Motion Tracking via PersonDetector Seam
+        detections = self.detector.detect_and_track(small_frame)
 
         # 2. Spatial Jitter Filtering & Geometric Validation
         raw_candidates: List[Dict[str, Any]] = []
-        for box, conf, track_id in zip(boxes_list, confs_list, track_ids_list):
+        for det in detections:
+            box = det.box
+            conf = det.conf
+            track_id = det.track_id
             # Dual-Threshold Track Initiation:
             # Active/confirmed tracks maintain continuity down to conf >= 0.25.
             # Brand new tracks require higher confidence (conf >= 0.45) to prevent spurious phantom initiation.

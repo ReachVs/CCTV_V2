@@ -26,7 +26,7 @@ The interface abstraction for vector similarity search. In production, this uses
 A privacy-compliant operating state where facial recognition and biometric vector embeddings are fully bypassed. Bounding boxes and 17-keypoint skeletal structures are tracked anonymously, and unconfirmed face crops are purged via `GDPRMemorySanitizer`.
 
 ### CameraIngestionPool
-The module managing bufferless frame acquisition from hardware cameras or RTSP video streams, draining internal driver queues to ensure zero-latency frame delivery.
+The unified hardware and multi-stream ingestion module consolidating bufferless frame acquisition across local webcams, RTSP streams, and multi-camera arrays (`CameraIngestionPool`, aliasing `MultiCameraIngestionManager` and `GlobalCameraStream`). Incorporates thread-safe reference-counting acquisition (`acquire()` / `release()`), a 3.0-second deferred teardown timer to eliminate camera re-opening thrash across browser reconnects, pause/resume hardware arbitration for biometric enrollment isolation, and automatic synthetic fallback frame generation during hardware disconnection or warmup periods.
 
 ### CrossoverContention
 The anti-ID-swapping protocol that monitors pairwise track overlap (IoU > 0.30 or containment > 0.40). When triggered, consensus certainty is invalidated (`is_confirmed=False`, `is_contended=True`), face extraction is frozen during occlusion to prevent cross-subject contamination, a 3-frame spatial separation hysteresis (`IoU < 0.15`) is enforced before unfreezing extraction, and recent track histories are blacklisted from spatial inheritance for 45 frames.

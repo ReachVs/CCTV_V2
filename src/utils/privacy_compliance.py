@@ -99,10 +99,10 @@ class PoseOnlyEstimator:
                     return keypoints_data
 
             GDPRMemorySanitizer.sanitize_image_buffer(crop)
-            return []
+            return self._generate_fallback_keypoints(bbox)
         except Exception as e:
             GDPRMemorySanitizer.sanitize_image_buffer(crop)
-            return []
+            return self._generate_fallback_keypoints(bbox)
 
     def _generate_fallback_keypoints(self, bbox: Tuple[int, int, int, int]) -> List[Dict[str, float]]:
         x1, y1, x2, y2 = bbox

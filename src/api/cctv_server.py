@@ -44,7 +44,7 @@ from src.inference.engine import BiometricTrackingEngine
 
 # Canonical Biometric Tracking Engine instance
 engine: BiometricTrackingEngine = live_cctv.engine
-from src.inference.multi_camera import MultiCameraIngestionManager, BufferlessVideoCapture
+from src.inference.multi_camera import CameraIngestionPool, MultiCameraIngestionManager, BufferlessVideoCapture
 from src.api.schemas import (
     FaceEnrollmentRequest,
     FaceEnrollmentResponse,
@@ -79,185 +79,23 @@ current_fps = 0.0
 fps_counter = 0
 last_fps_time = time.time()
 
-# Multi-camera Manager & Legacy Single Camera Stream Manager
-multi_camera_manager = MultiCameraIngestionManager()
+# Unified Camera Ingestion Pool (zero driver queue latency, on-demand ref-counting)
+def _process_cctv_frame(frame: np.ndarray) -> np.ndarray:
+    global current_fps
+    if hasattr(camera_stream, "current_fps"):
+        current_fps = camera_stream.current_fps
+    if SYSTEM_MODE == "ENROLLMENT":
+        return frame
+    try:
+        res = engine.process_frame(frame, annotate=True)
+        return res.annotated_frame
+    except Exception as e:
+        print(f"[CCTV Frame Processing Warning] {e}")
+        return frame
 
-
-class GlobalCameraStream:
-    """
-    On-Demand Reference-Counted Camera Stream Manager.
-    Delegates to MultiCameraIngestionManager for zero-contention camera hardware access,
-    or falls back to direct VideoCapture handle.
-    """
-    def __init__(self, source=0, width=854, height=480):
-        self.source = source
-        self.width = width
-        self.height = height
-        self.cap = None
-        self.latest_raw_frame = None
-        self.latest_processed_frame = None
-        self.lock = threading.Lock()
-        self.running = False
-        self.paused = False
-        self.client_count = 0
-        self.thread = None
-        self.shutdown_timer = None
-
-    def pause(self):
-        with self.lock:
-            self.paused = True
-            if self.cap is not None:
-                try:
-                    if self.cap.isOpened():
-                        self.cap.release()
-                except Exception as e:
-                    print(f"[Camera Pause Warning] {e}")
-                self.cap = None
-
-    def resume(self):
-        with self.lock:
-            self.paused = False
-
-    def acquire(self):
-        with self.lock:
-            if self.shutdown_timer is not None:
-                self.shutdown_timer.cancel()
-                self.shutdown_timer = None
-
-            self.client_count += 1
-            if self.client_count >= 1 and not self.running:
-                self._start_thread()
-
-    def release(self):
-        with self.lock:
-            self.client_count = max(0, self.client_count - 1)
-            if self.client_count == 0 and self.running:
-                if self.shutdown_timer is not None:
-                    self.shutdown_timer.cancel()
-                self.shutdown_timer = threading.Timer(3.0, self._deferred_shutdown)
-                self.shutdown_timer.daemon = True
-                self.shutdown_timer.start()
-
-    def _deferred_shutdown(self):
-        with self.lock:
-            self.shutdown_timer = None
-            if self.client_count == 0 and self.running:
-                self.running = False
-                self._release_hardware_locked()
-
-    def _start_thread(self):
-        if self.running:
-            return
-        self.running = True
-        self.thread = threading.Thread(target=self._reader_loop, daemon=True)
-        self.thread.start()
-
-    def _reader_loop(self):
-        global fps_counter, last_fps_time, current_fps, SYSTEM_MODE
-        while self.running:
-            if self.paused:
-                time.sleep(0.05)
-                continue
-
-            # Step 1: Attempt reading from multi_camera_manager primary stream to prevent hardware contention
-            ret, frame = multi_camera_manager.get_frame("primary")
-
-            # Step 2: Fallback to direct VideoCapture if multi_camera_manager stream is inactive
-            if not ret or frame is None:
-                with self.lock:
-                    if not self.running:
-                        break
-                    if self.cap is None or not self.cap.isOpened():
-                        try:
-                            self.cap = cv2.VideoCapture(self.source)
-                            if self.cap.isOpened():
-                                self.cap.set(cv2.CAP_PROP_FRAME_WIDTH, self.width)
-                                self.cap.set(cv2.CAP_PROP_FRAME_HEIGHT, self.height)
-                                self.cap.set(cv2.CAP_PROP_BUFFERSIZE, 1)
-                                for _ in range(3):
-                                    self.cap.read()
-                        except Exception as e:
-                            print(f"[Camera Error] VideoCapture failed: {e}")
-
-                    if self.cap is not None and self.cap.isOpened():
-                        try:
-                            ret, frame = self.cap.read()
-                        except Exception:
-                            ret, frame = False, None
-
-            if not ret or frame is None:
-                synthetic = self._generate_synthetic_frame()
-                with self.lock:
-                    self.latest_raw_frame = synthetic
-                    self.latest_processed_frame = synthetic
-                time.sleep(0.05)
-                continue
-
-            raw_copy = frame.copy()
-            if SYSTEM_MODE == "ENROLLMENT":
-                proc = raw_copy
-            else:
-                try:
-                    res = engine.process_frame(frame, annotate=True)
-                    proc = res.annotated_frame
-                except Exception as e:
-                    print(f"[CCTV Frame Processing Warning] {e}")
-                    proc = frame
-
-            fps_counter += 1
-            now = time.time()
-            if now - last_fps_time >= 1.0:
-                current_fps = round(fps_counter / (now - last_fps_time), 1)
-                fps_counter = 0
-                last_fps_time = now
-
-            with self.lock:
-                self.latest_raw_frame = raw_copy
-                self.latest_processed_frame = proc
-
-            time.sleep(0.002)
-
-        with self.lock:
-            self._release_hardware_locked()
-
-    def _release_hardware_locked(self):
-        if self.cap is not None:
-            try:
-                if self.cap.isOpened():
-                    self.cap.release()
-            except Exception:
-                pass
-            self.cap = None
-
-    def _generate_synthetic_frame(self):
-        canvas = np.zeros((480, 854, 3), dtype=np.uint8)
-        cv2.putText(canvas, "CCTV SYSTEM ENGINE ONLINE", (220, 220),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.8, (0, 255, 0), 2)
-        cv2.putText(canvas, f"Time: {time.strftime('%H:%M:%S')} | Standby Mode", (260, 260),
-                    cv2.FONT_HERSHEY_SIMPLEX, 0.5, (200, 200, 200), 1)
-        return canvas
-
-    def get_raw_frame(self):
-        with self.lock:
-            if self.latest_raw_frame is not None:
-                return self.latest_raw_frame.copy()
-            return self._generate_synthetic_frame()
-
-    def get_processed_frame(self):
-        with self.lock:
-            if self.latest_processed_frame is not None:
-                return self.latest_processed_frame.copy()
-            return self._generate_synthetic_frame()
-
-    def stop(self):
-        self.running = False
-        with self.lock:
-            self._release_hardware_locked()
-        if self.thread and self.thread.is_alive():
-            self.thread.join(timeout=1.0)
-
-
-camera_stream = GlobalCameraStream()
+camera_stream = CameraIngestionPool(source=0, width=854, height=480, frame_processor=_process_cctv_frame)
+multi_camera_manager = camera_stream
+GlobalCameraStream = CameraIngestionPool
 
 
 def init_db():

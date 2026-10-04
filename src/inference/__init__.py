@@ -10,6 +10,12 @@ from src.inference.face_embedder import (
     ArcFaceEmbedder,
     ScriptedFaceEmbedder,
 )
+from src.inference.multi_camera import (
+    CameraIngestionPool,
+    MultiCameraIngestionManager,
+    BufferlessVideoCapture,
+    EventAggregator,
+)
 
 __all__ = [
     "PersonDetector",
@@ -19,4 +25,8 @@ __all__ = [
     "FaceEmbedder",
     "ArcFaceEmbedder",
     "ScriptedFaceEmbedder",
+    "CameraIngestionPool",
+    "MultiCameraIngestionManager",
+    "BufferlessVideoCapture",
+    "EventAggregator",
 ]

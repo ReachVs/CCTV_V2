@@ -13,7 +13,6 @@ import math
 import sys
 import threading
 import time
-from abc import ABC, abstractmethod
 from dataclasses import dataclass, field
 from datetime import datetime
 from typing import Dict, Any, List, Optional, Tuple, Union
@@ -32,7 +31,7 @@ from src.utils.jitter_filter import JitterFilterEngine
 from src.utils.face_align import YuNetFaceAligner
 from src.utils.fsrcnn_upscaler import FSRCNNUpscaler
 from src.rendering.annotator import FrameAnnotator
-from src.domain.subject_session import SubjectSession
+from src.domain.subject_session import SubjectSession, TrackStatus
 from src.utils.privacy_compliance import (
     GDPRMemorySanitizer,
     PoseOnlyEstimator,
@@ -70,6 +69,7 @@ class TrackedSubject:
     is_scanning: bool
     is_unknown: bool
     is_contended: bool = False
+    status: Optional[str] = None
     keypoints: Optional[List[Dict[str, float]]] = None
     meta: Dict[str, Any] = field(default_factory=dict)
 
@@ -199,6 +199,7 @@ class BiometricTrackingEngine:
 
         # Internal Tracking State
         self.frame_count = 0
+        self._sessions: Dict[int, SubjectSession] = {}
         self.active_tracks: Dict[int, str] = {}
         self.track_last_seen: Dict[int, int] = {}
         self.track_first_seen: Dict[int, int] = {}
@@ -224,6 +225,21 @@ class BiometricTrackingEngine:
 
         self._embedder_thread = threading.Thread(target=self._embedder_worker, daemon=True)
         self._embedder_thread.start()
+
+    def _get_or_create_session(self, track_id: int, box: Tuple[int, int, int, int], frame_num: int) -> SubjectSession:
+        if track_id not in self._sessions:
+            session = SubjectSession(
+                track_id=track_id,
+                first_seen=frame_num,
+                last_seen=frame_num,
+                box=box
+            )
+            self._sessions[track_id] = session
+        else:
+            session = self._sessions[track_id]
+            session.last_seen = frame_num
+            session.box = box
+        return session
 
     # -----------------------------------------------------------------
     # Initializers & Index Management
@@ -624,8 +640,11 @@ class BiometricTrackingEngine:
                     is_confirmed=True,
                     is_scanning=False,
                     is_unknown=False,
+                    status=TrackStatus.POSE_TARGET.value,
                     keypoints=kpts
                 )
+                session = self._get_or_create_session(track_id, curr_box, current_frame_num)
+                session.mark_pose(kpts)
                 active_subject_list.append(subject)
                 continue
 
@@ -742,6 +761,18 @@ class BiometricTrackingEngine:
                         break
 
             is_contended_flag = (track_id in self.contended_tracks)
+            curr_status = (
+                TrackStatus.CONTENDED.value if is_contended_flag else
+                (TrackStatus.UNVERIFIED.value if is_unverified else
+                 (TrackStatus.SCANNING.value if is_scanning else
+                  (TrackStatus.UNKNOWN.value if is_unknown else TrackStatus.CONFIRMED.value)))
+            )
+            session = self._get_or_create_session(track_id, curr_box, current_frame_num)
+            session.status = TrackStatus(curr_status)
+            session.confidence = 0.85 if is_confirmed else 0.50
+            session.identity_name = subject_name if is_confirmed and not is_unknown else ""
+            session.meta = meta_dict
+
             subject = TrackedSubject(
                 track_id=track_id,
                 name=subject_name,
@@ -751,6 +782,7 @@ class BiometricTrackingEngine:
                 is_scanning=is_scanning,
                 is_unknown=is_unknown,
                 is_contended=is_contended_flag,
+                status=curr_status,
                 keypoints=self.track_keypoints.get(track_id),
                 meta=meta_dict
             )
@@ -1024,8 +1056,9 @@ class BiometricTrackingEngine:
             return current_display, telemetry
 
     def purge_track(self, track_id: int) -> None:
-        """Purges track state across all internal tables."""
+        """Purges track state across all internal tables and sessions."""
         with self.lock:
+            self._sessions.pop(track_id, None)
             self.active_tracks.pop(track_id, None)
             self.track_last_seen.pop(track_id, None)
             self.track_first_seen.pop(track_id, None)

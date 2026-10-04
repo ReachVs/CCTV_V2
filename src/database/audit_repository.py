@@ -52,6 +52,15 @@ class AuditRepository:
         if not os.path.exists(self.db_path):
             return []
 
+        try:
+            from src.utils.privacy_compliance import AESEncryptedWALAuditLogger
+            logger = AESEncryptedWALAuditLogger(db_path=self.db_path)
+            events = logger.fetch_recent_events(limit=limit)
+            if events:
+                return events
+        except Exception:
+            pass
+
         if aiosqlite is not None:
             try:
                 async with aiosqlite.connect(self.db_path) as conn:

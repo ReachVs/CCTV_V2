@@ -2,9 +2,14 @@
 OpenCV Frame Annotator for CCTV Surveillance & Biometric HUD.
 Decouples visual presentation, color maps, and HUD overlays from core mathematical inference.
 """
-from typing import List, Tuple, Optional, Dict, Any
+from typing import List, Any
 import numpy as np
 import cv2
+
+try:
+    from src.domain.subject_session import TrackStatus
+except ImportError:
+    TrackStatus = None
 
 
 class FrameAnnotator:
@@ -43,13 +48,16 @@ class FrameAnnotator:
             x1, y1, x2, y2 = box
             track_id = getattr(s, "track_id", 0)
             name = getattr(s, "name", "")
-            is_contended = getattr(s, "is_contended", False)
-            is_scanning = getattr(s, "is_scanning", False)
-            is_unknown = getattr(s, "is_unknown", False)
+            status = getattr(s, "status", None)
+            is_contended = getattr(s, "is_contended", False) or (status == TrackStatus.CONTENDED if TrackStatus else False)
+            is_scanning = getattr(s, "is_scanning", False) or (status == TrackStatus.SCANNING if TrackStatus else False)
+            is_unknown = getattr(s, "is_unknown", False) or (status == TrackStatus.UNKNOWN if TrackStatus else False)
+            is_unverified = (status == TrackStatus.UNVERIFIED if TrackStatus else False) or name.startswith("Unverified")
+            is_pose = (status == TrackStatus.POSE_TARGET if TrackStatus else False) or name.startswith("Pose Target")
             kpts = getattr(s, "keypoints", None)
 
             # 1. Pose Target Branch (17-KPT pose estimation)
-            if name.startswith("Pose Target"):
+            if is_pose:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), self.COLOR_POSE, self.box_thickness)
                 if kpts:
                     for kp in kpts:
@@ -62,7 +70,6 @@ class FrameAnnotator:
                 continue
 
             # 2. Standard Biometric & Subject Tracking Branch
-            is_unverified = name.startswith("Unverified")
             if is_contended:
                 color = self.COLOR_CONTENDED
                 label_str = f"ID {track_id}: Contended (Crossover)"

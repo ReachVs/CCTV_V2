@@ -34,4 +34,10 @@ The anti-ID-swapping protocol that monitors pairwise track overlap (IoU > 0.30 o
 ### HeadShoulderPreGating
 The geometric and biometric pre-admission protocol requiring upper-body or head presence (either pose keypoints 0..6 [nose, eyes, ears, shoulders] with $\ge 0.35$ confidence, or detected facial landmarks via YuNet) before admitting unconfirmed candidate boxes into `active_tracks`. Isolated arms, hands, legs, or torso-less limb noise are rejected prior to biometric queueing and scanning UI instantiation.
 
+### SubjectSession
+The cohesive domain entity encapsulating the complete lifecycle, temporal bounding box history, biometric consensus voting tally, contention hysteresis, and pose metadata for an active track ID, consolidating previously scattered tracking state tables.
+
+### TrackStatus
+The explicit lifecycle state machine enum (`SCANNING`, `CONFIRMED`, `CONTENDED`, `UNVERIFIED`, `UNKNOWN`, `POSE_TARGET`) governing biometric gating, HUD visualization color palettes, and identity locking transitions without string-parsing heuristics.
+
 

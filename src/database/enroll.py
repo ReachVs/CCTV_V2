@@ -13,9 +13,11 @@ if PROJECT_ROOT not in sys.path:
 import cv2
 from src.utils.face_align import YuNetFaceAligner
 from src.utils.fsrcnn_upscaler import FSRCNNUpscaler
+from src.inference.face_embedder import ArcFaceEmbedder
 
 aligner = YuNetFaceAligner()
 upscaler = FSRCNNUpscaler()
+embedder = ArcFaceEmbedder(model_name="ArcFace", face_aligner=aligner, upscaler=upscaler)
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -97,47 +99,27 @@ def run_enrollment():
     else:
         print(f"[Enrollment] Found {len(image_files)} image(s) to process.")
         
-        try:
-            from deepface import DeepFace
-        except ImportError:
-            print("[Enrollment Error] DeepFace module not found.")
-            return
-
         for img_path in image_files:
             name = extract_subject_name(img_path, FACES_DIR)
-            print(f"[Enrollment] Extracting AdaFace biometric embedding for '{name}'...")
+            print(f"[Enrollment] Extracting ArcFace biometric embedding for '{name}'...")
             
             try:
                 img_cv = cv2.imread(img_path)
                 if img_cv is None or img_cv.size == 0:
                     continue
 
-                # 1. Primary YuNet 5-Point Landmark Alignment & Boundary Gating
-                aligned_crop = aligner.align_face(img_cv, output_size=(112, 112), strict=True)
-                
-                # If strict YuNet alignment failed, fallback to DeepFace with OpenCV backend
-                if aligned_crop is None:
-                    aligned_crop = aligner.align_face(img_cv, output_size=(112, 112), strict=False)
+                # Primary YuNet 5-point landmark alignment & embedding
+                emb = embedder.embed(img_cv, align=True, strict_alignment=True, upscale=False)
+                if emb is None:
+                    # Non-strict alignment fallback
+                    emb = embedder.embed(img_cv, align=True, strict_alignment=False, upscale=False)
 
-                if aligned_crop is not None:
-                    representations = DeepFace.represent(
-                        img_path=aligned_crop,
-                        model_name="ArcFace",
-                        detector_backend="skip",
-                        enforce_detection=False
-                    )
-                    
-                    if representations and "embedding" in representations[0]:
-                        raw_emb = representations[0]["embedding"]
-                        normalized_emb = l2_normalize(raw_emb)
-                        
-                        embeddings_list.append(normalized_emb)
-                        names_list.append(name)
-                        print(f"[Enrollment] Successfully enrolled profile for: '{name}'")
-                    else:
-                        print(f"[Enrollment Warning] Skipping '{img_path}' for '{name}' - Could not extract embedding.")
+                if emb is not None:
+                    embeddings_list.append(emb)
+                    names_list.append(name)
+                    print(f"[Enrollment] Successfully enrolled profile for: '{name}'")
                 else:
-                    print(f"[Enrollment Warning] Skipping '{img_path}' for '{name}' - No valid face detected in photo.")
+                    print(f"[Enrollment Warning] Skipping '{img_path}' for '{name}' - Could not extract embedding.")
                     
             except Exception as e:
                 print(f"[Enrollment] Error processing {img_path}: {e}")

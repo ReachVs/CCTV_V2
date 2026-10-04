@@ -43,4 +43,7 @@ The explicit lifecycle state machine enum (`SCANNING`, `CONFIRMED`, `CONTENDED`,
 ### PersonDetector
 The explicit motion and person detection seam (`PersonDetector`, `UltralyticsPersonDetector`, `ScriptedPersonDetector`, `DetectedBox`). Decouples `BiometricTrackingEngine` from Ultralytics YOLO models and encapsulates traditional Haar cascade fallback. Enables hermetic, model-free unit testing without monkeypatching private engine internals.
 
+### FaceEmbedder
+The unified biometric vector extraction seam (`FaceEmbedder`, `ArcFaceEmbedder`, `ScriptedFaceEmbedder`). Unifies facial super-resolution, YuNet 5-point landmark alignment, neural inference, and $L_2$ vector normalization across live tracking, enrollment, and database rebuild pipelines.
+
 

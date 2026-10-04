@@ -15,8 +15,7 @@ INDEX_PATH = os.path.join(DATA_DIR, "faces.index")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.json")
 DB_PATH = os.path.join(DATA_DIR, "faces.db")
 
-from src.utils.face_align import YuNetFaceAligner
-from deepface import DeepFace
+from src.inference.face_embedder import ArcFaceEmbedder
 import faiss
 
 def rebuild_biometric_database():
@@ -28,16 +27,9 @@ def rebuild_biometric_database():
         print(f"[ERROR] Directory '{KNOWN_FACES_DIR}' not found.")
         return
 
-    # Initialize ArcFace model & YuNet aligner
-    print("[INIT] Loading YuNet face aligner and ArcFace embedding model...")
-    aligner = YuNetFaceAligner()
-    keras_model = None
-    try:
-        model_wrapper = DeepFace.build_model("ArcFace")
-        keras_model = model_wrapper.model
-        print("[INIT] ArcFace Keras model loaded successfully.")
-    except Exception as e:
-        print(f"[WARNING] Could not load Keras model directly: {e}. Fallback to DeepFace.represent.")
+    # Initialize ArcFace embedder (YuNet aligner + Keras tensor engine)
+    print("[INIT] Initializing unified ArcFaceEmbedder...")
+    embedder = ArcFaceEmbedder(model_name="ArcFace")
 
     vectors = []
     metadata_dict = {}
@@ -59,31 +51,12 @@ def rebuild_biometric_database():
             if img is None or img.size == 0:
                 continue
                 
-            # Align face using YuNet + Umeyama transform
-            aligned = aligner.align_face(img, output_size=(112, 112), strict=False)
-            if aligned is None:
-                aligned = cv2.resize(img, (112, 112))
-                
-            v = None
-            if keras_model is not None:
-                img_tensor = (aligned.astype(np.float32) / 255.0)
-                img_tensor = np.expand_dims(img_tensor, axis=0)
-                v = keras_model(img_tensor, training=False).numpy().flatten()
-            else:
-                try:
-                    reps = DeepFace.represent(img_path=img_path, model_name="ArcFace", enforce_detection=False)
-                    if reps:
-                        v = np.array(reps[0]["embedding"], dtype=np.float32)
-                except Exception as e:
-                    print(f"  [Warning] Extracting {img_name}: {e}")
-                    
+            # Unified alignment and ArcFace extraction
+            v = embedder.embed(img, align=True, strict_alignment=False, upscale=False)
             if v is not None:
-                norm_val = np.linalg.norm(v)
-                if norm_val > 0:
-                    v = v / norm_val
-                    vector_idx = len(vectors)
-                    vectors.append(v)
-                    subject_vectors.append(v)
+                vector_idx = len(vectors)
+                vectors.append(v)
+                subject_vectors.append(v)
                     
                     pose_tag = img_name.split("_")[-2] if "_" in img_name else "Frontal"
                     metadata_dict[str(vector_idx)] = {

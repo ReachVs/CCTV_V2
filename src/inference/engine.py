@@ -38,6 +38,11 @@ from src.inference.person_detector import (
     ScriptedPersonDetector,
     DetectedBox,
 )
+from src.inference.face_embedder import (
+    FaceEmbedder,
+    ArcFaceEmbedder,
+    ScriptedFaceEmbedder,
+)
 from src.utils.privacy_compliance import (
     GDPRMemorySanitizer,
     PoseOnlyEstimator,
@@ -149,6 +154,7 @@ class BiometricTrackingEngine:
         self,
         index_adapter: Optional[VectorIndexAdapter] = None,
         detector: Optional[PersonDetector] = None,
+        embedder: Optional[FaceEmbedder] = None,
         index_path: Optional[str] = None,
         metadata_path: Optional[str] = None,
         db_path: Optional[str] = None,
@@ -201,6 +207,17 @@ class BiometricTrackingEngine:
         self.jitter_engine = JitterFilterEngine(erratic_threshold=80.0)
         self.face_aligner = YuNetFaceAligner()
         self.fsrcnn_upscaler = FSRCNNUpscaler()
+
+        # Face Embedder Seam (ArcFace or Scripted test adapter)
+        if embedder is not None:
+            self.embedder = embedder
+        else:
+            self.embedder = ArcFaceEmbedder(
+                model_name=self.model_name,
+                face_aligner=self.face_aligner,
+                upscaler=self.fsrcnn_upscaler
+            )
+
         self.temporal_subsampler = TemporalSubsampler(subsample_interval=3)
         self.encrypted_audit_logger = AESEncryptedWALAuditLogger(db_path=self.db_path)
         self.pose_estimator = PoseOnlyEstimator(pose_model_spec=DEFAULT_MODEL_CONFIG.get_effective_pose_model())
@@ -314,17 +331,18 @@ class BiometricTrackingEngine:
         if not hasattr(self, "detector") or self.detector is None:
             self.detector = UltralyticsPersonDetector(tracker_cfg=self.bytetrack_cfg, enable_haar=True)
 
+    @property
+    def _keras_model(self) -> Any:
+        return getattr(self.embedder, "keras_model", None)
+
+    @_keras_model.setter
+    def _keras_model(self, model: Any) -> None:
+        if hasattr(self.embedder, "keras_model"):
+            self.embedder.keras_model = model
+
     def _init_embedder_model(self):
-        try:
-            if DeepFace is not None:
-                model_wrapper = DeepFace.build_model(self.model_name)
-                self._keras_model = getattr(model_wrapper, 'model', None)
-                if self._keras_model is not None:
-                    dummy_in = np.zeros((1, 112, 112, 3), dtype=np.float32)
-                    _ = self._keras_model(dummy_in, training=False)
-                    print("[BiometricEngine] Fast ArcFace Tensor Engine initialized.")
-        except Exception as e:
-            print(f"[BiometricEngine Warning] Embedder model initialization: {e}")
+        if hasattr(self.embedder, "_init_model"):
+            self.embedder._init_model()
 
     def reload_index(self, index_path: Optional[str] = None, metadata_path: Optional[str] = None) -> None:
         """Atomic hot-reload of FAISS vector index and metadata without dropping active tracks."""
@@ -1065,35 +1083,7 @@ class BiometricTrackingEngine:
         Unified biometric extraction pipeline used across live tracking and enrollment.
         Aligns raw face using YuNet (Umeyama similarity transform) and extracts normalized 512D ArcFace vector.
         """
-        if img_or_crop is None or img_or_crop.size == 0:
-            return None
-
-        aligned = img_or_crop
-        if align:
-            aligned = self.face_aligner.align_face(img_or_crop, output_size=(112, 112), strict=False)
-            if aligned is None:
-                return None
-
-        if self._keras_model is not None:
-            img_tensor = (aligned.astype(np.float32) / 255.0)
-            img_tensor = np.expand_dims(img_tensor, axis=0)
-            emb_raw = self._keras_model(img_tensor, training=False).numpy().flatten()
-            norm_val = float(np.linalg.norm(emb_raw))
-            if norm_val > 0.3:
-                return emb_raw / norm_val
-            return None
-        elif DeepFace is not None:
-            try:
-                reps = DeepFace.represent(img_path=aligned, model_name=self.model_name, detector_backend="skip", enforce_detection=False)
-            except Exception:
-                reps = DeepFace.represent(img_path=aligned, model_name=self.model_name, detector_backend="opencv", enforce_detection=False)
-            if reps and len(reps) > 0:
-                raw_e = reps[0].get("embedding") if isinstance(reps[0], dict) else None
-                if raw_e is not None:
-                    emb = np.array(raw_e, dtype=np.float32)
-                    norm = float(np.linalg.norm(emb))
-                    return emb / norm if norm > 0 else emb
-        return None
+        return self.embedder.embed(img_or_crop, align=align, strict_alignment=False, upscale=False)
 
     def _add_crop_to_embedder(self, track_id: int, crop: np.ndarray, frame_num: int):
         with self._embedder_lock:
@@ -1127,60 +1117,9 @@ class BiometricTrackingEngine:
         for item in batch_to_process:
             crop = item["crop"]
             crops_to_sanitize.append(crop)
-            enhanced = self.fsrcnn_upscaler.upscale(crop)
-
-            crop_h, crop_w = enhanced.shape[:2]
-            if crop_w > 320 or crop_h > 320:
-                scale = 320.0 / max(crop_w, crop_h)
-                new_w = max(1, int(crop_w * scale))
-                new_h = max(1, int(crop_h * scale))
-                enhanced = cv2.resize(enhanced, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
-
-            try:
-                aligned = self.face_aligner.align_face(enhanced, output_size=(112, 112), strict=True)
-                if aligned is None:
-                    embeddings.append(None)
-                    ratios.append(None)
-                    continue
-
-                crops_to_sanitize.append(aligned)
-
-                if self._keras_model is not None:
-                    img_tensor = (aligned.astype(np.float32) / 255.0)
-                    img_tensor = np.expand_dims(img_tensor, axis=0)
-                    emb_raw = self._keras_model(img_tensor, training=False).numpy().flatten()
-                    norm_val = float(np.linalg.norm(emb_raw))
-                    if norm_val > 0.3:
-                        emb = emb_raw / norm_val
-                        embeddings.append(emb)
-                        ratios.append((0.1, 0.1, 0.8, 0.8))
-                    else:
-                        embeddings.append(None)
-                        ratios.append(None)
-                elif DeepFace is not None:
-                    try:
-                        reps = DeepFace.represent(img_path=aligned, model_name=self.model_name, detector_backend="skip", enforce_detection=False)
-                    except Exception:
-                        reps = DeepFace.represent(img_path=aligned, model_name=self.model_name, detector_backend="opencv", enforce_detection=False)
-                    if reps and len(reps) > 0:
-                        raw_e = reps[0].get("embedding") if isinstance(reps[0], dict) else None
-                        if raw_e is not None:
-                            emb = np.array(raw_e, dtype=np.float32)
-                            norm = np.linalg.norm(emb)
-                            embeddings.append(emb / norm if norm > 0 else emb)
-                            ratios.append((0.1, 0.1, 0.8, 0.8))
-                        else:
-                            embeddings.append(None)
-                            ratios.append(None)
-                    else:
-                        embeddings.append(None)
-                        ratios.append(None)
-                else:
-                    embeddings.append(None)
-                    ratios.append(None)
-            except Exception:
-                embeddings.append(None)
-                ratios.append(None)
+            emb = self.embedder.embed(crop, align=True, strict_alignment=True, upscale=True)
+            embeddings.append(emb)
+            ratios.append((0.1, 0.1, 0.8, 0.8) if emb is not None else None)
 
         for i, item in enumerate(batch_to_process):
             self._handle_embedding_result(item["track_id"], embeddings[i], ratios[i])

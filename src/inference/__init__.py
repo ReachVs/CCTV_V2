@@ -5,10 +5,18 @@ from src.inference.person_detector import (
     ScriptedPersonDetector,
     DetectedBox,
 )
+from src.inference.face_embedder import (
+    FaceEmbedder,
+    ArcFaceEmbedder,
+    ScriptedFaceEmbedder,
+)
 
 __all__ = [
     "PersonDetector",
     "UltralyticsPersonDetector",
     "ScriptedPersonDetector",
     "DetectedBox",
+    "FaceEmbedder",
+    "ArcFaceEmbedder",
+    "ScriptedFaceEmbedder",
 ]

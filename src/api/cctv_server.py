@@ -453,8 +453,9 @@ async def enroll_subject_api(req: FaceEnrollmentRequest):
 async def get_audit_events():
     try:
         events = []
-        if hasattr(engine, 'encrypted_audit_logger') and engine.encrypted_audit_logger is not None:
-            raw_events = engine.encrypted_audit_logger.fetch_recent_events(limit=50)
+        audit_source = getattr(engine, "audit_logger", getattr(engine, "encrypted_audit_logger", audit_repo))
+        if audit_source is not None:
+            raw_events = await audit_source.get_recent_events(limit=50)
             events = [
                 AuditEventSchema(
                     id=e["id"],
@@ -462,12 +463,10 @@ async def get_audit_events():
                     person_name=e["person_name"],
                     track_id=e["track_id"],
                     match_distance=e["match_distance"],
+                    snapshot_path=e.get("snapshot_path", ""),
                     meta=e.get("meta", {})
                 ) for e in raw_events
             ]
-        elif os.path.exists(DB_PATH):
-            raw_events = await audit_repo.get_recent_events(limit=50)
-            events = [AuditEventSchema(**r) for r in raw_events]
 
         active_subjects = engine.get_active_tracks()
         active_list = [

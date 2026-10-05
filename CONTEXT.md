@@ -45,5 +45,5 @@ The explicit motion and person detection seam (`PersonDetector`, `UltralyticsPer
 
 ### FaceEmbedder
 The unified biometric vector extraction seam (`FaceEmbedder`, `ArcFaceEmbedder`, `ScriptedFaceEmbedder`). Unifies facial super-resolution, YuNet 5-point landmark alignment, neural inference, and $L_2$ vector normalization across live tracking, enrollment, and database rebuild pipelines.
-
-
+### AuditLogger
+The unified security audit logging seam (`AuditLogger`, `EncryptedWALAuditLogger`, `ScriptedAuditLogger`, aliasing `AuditRepository` and `AESEncryptedWALAuditLogger`). Consolidates AES-256 Fernet payload encryption at rest, SQLite WAL mode, non-blocking queue ingestion for live video streaming (<0.1ms latency), and dual sync/async query APIs across FastAPI endpoints and MCP servers.

@@ -46,7 +46,12 @@ from src.inference.face_embedder import (
 from src.utils.privacy_compliance import (
     GDPRMemorySanitizer,
     PoseOnlyEstimator,
-    AESEncryptedWALAuditLogger
+)
+from src.database.audit_repository import (
+    AuditLogger,
+    EncryptedWALAuditLogger,
+    ScriptedAuditLogger,
+    AESEncryptedWALAuditLogger,
 )
 
 try:
@@ -155,6 +160,7 @@ class BiometricTrackingEngine:
         index_adapter: Optional[VectorIndexAdapter] = None,
         detector: Optional[PersonDetector] = None,
         embedder: Optional[FaceEmbedder] = None,
+        audit_logger: Optional[AuditLogger] = None,
         index_path: Optional[str] = None,
         metadata_path: Optional[str] = None,
         db_path: Optional[str] = None,
@@ -219,7 +225,14 @@ class BiometricTrackingEngine:
             )
 
         self.temporal_subsampler = TemporalSubsampler(subsample_interval=3)
-        self.encrypted_audit_logger = AESEncryptedWALAuditLogger(db_path=self.db_path)
+
+        # Unified Audit Logger Seam (EncryptedWALAuditLogger or Scripted test adapter)
+        if audit_logger is not None:
+            self.audit_logger = audit_logger
+        else:
+            self.audit_logger = EncryptedWALAuditLogger(db_path=self.db_path)
+        self.encrypted_audit_logger = self.audit_logger  # Backward-compatibility alias
+
         self.pose_estimator = PoseOnlyEstimator(pose_model_spec=DEFAULT_MODEL_CONFIG.get_effective_pose_model())
         self.annotator = FrameAnnotator()
 
@@ -1171,6 +1184,8 @@ class BiometricTrackingEngine:
             self._handle_embedding_result(item["track_id"], embeddings[i], ratios[i])
 
         GDPRMemorySanitizer.sanitize_crop_list(crops_to_sanitize)
+        if hasattr(self.audit_logger, "flush"):
+            self.audit_logger.flush()
 
     def _handle_embedding_result(self, track_id: int, emb: Optional[np.ndarray], ratio: Any):
         with self.lock:
@@ -1292,8 +1307,8 @@ class BiometricTrackingEngine:
         self._embedder_running = False
         if self._embedder_thread.is_alive():
             self._embedder_thread.join(timeout=1.0)
-        if hasattr(self.encrypted_audit_logger, 'stop'):
-            self.encrypted_audit_logger.stop()
+        if hasattr(self.audit_logger, 'stop'):
+            self.audit_logger.stop()
         print("[BiometricEngine] Engine stopped cleanly.")
 
 

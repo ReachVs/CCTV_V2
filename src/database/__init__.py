@@ -1,7 +1,13 @@
 """
 Database & Persistence Package for CCTV Pipeline.
 """
-from src.database.audit_repository import AuditRepository
+from src.database.audit_repository import (
+    AuditLogger,
+    EncryptedWALAuditLogger,
+    ScriptedAuditLogger,
+    AuditRepository,
+    AESEncryptedWALAuditLogger,
+)
 from src.database.vector_store import (
     VectorIndexAdapter,
     FAISSIndexAdapter,
@@ -9,7 +15,11 @@ from src.database.vector_store import (
 )
 
 __all__ = [
+    "AuditLogger",
+    "EncryptedWALAuditLogger",
+    "ScriptedAuditLogger",
     "AuditRepository",
+    "AESEncryptedWALAuditLogger",
     "VectorIndexAdapter",
     "FAISSIndexAdapter",
     "InMemoryIndexAdapter"

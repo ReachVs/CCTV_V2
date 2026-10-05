@@ -246,10 +246,20 @@
         /* Main Workspace Grid */
         .dashboard-grid {
             display: grid;
-            grid-template-columns: 1fr 380px;
+            grid-template-columns: minmax(0, 1fr) 420px;
             gap: 20px;
             padding: 20px;
             flex: 1;
+            width: 100%;
+            max-width: 1800px;
+            margin: 0 auto;
+            align-items: start;
+        }
+
+        @media (max-width: 1100px) {
+            .dashboard-grid {
+                grid-template-columns: 1fr;
+            }
         }
 
         /* Video Screen Panel */
@@ -264,11 +274,13 @@
             gap: 16px;
             box-shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
             position: relative;
+            width: 100%;
         }
 
         .video-viewport {
             position: relative;
             width: 100%;
+            aspect-ratio: 16 / 9;
             border-radius: 10px;
             overflow: hidden;
             background: #000;
@@ -277,13 +289,11 @@
             display: flex;
             align-items: center;
             justify-content: center;
-            min-height: 480px;
         }
 
         .video-stream {
             width: 100%;
-            height: auto;
-            max-height: 600px;
+            height: 100%;
             object-fit: contain;
             display: block;
         }
@@ -1061,7 +1071,7 @@
             <!-- Dynamic Multi-Person Telemetry Cards Container -->
             <div id="telemetry-cards-container" style="display: flex; flex-direction: column; gap: 12px; max-height: 480px; overflow-y: auto;">
                 <!-- Telemetry Cards rendered dynamically for all detected persons -->
-            </div>        </div>
+            </div>
 
             <!-- Audit Logs Stream -->
             <div class="telemetry-card audit-panel">
@@ -1078,7 +1088,6 @@
                     <!-- Events will populate dynamically -->
                 </div>
             </div>
-
         </div>
 
     </div>

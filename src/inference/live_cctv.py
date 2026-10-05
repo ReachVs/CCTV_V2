@@ -1,7 +1,9 @@
 import os
 import sys
 import math
+import threading
 import numpy as np
+from types import ModuleType
 from typing import Dict, Any, List, Optional, Tuple
 
 PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
@@ -18,50 +20,68 @@ from src.inference.engine import (
 from src.inference.multi_camera import BufferlessVideoCapture
 from src.utils.face_align import apply_clahe_contrast_lifting
 
-# =====================================================================
-# Canonical Shared Engine Singleton
-# =====================================================================
-_DEFAULT_ENGINE = BiometricTrackingEngine()
-
-# Primary module-level references
-engine = _DEFAULT_ENGINE
-biometric_engine = _DEFAULT_ENGINE
-state_lock = _DEFAULT_ENGINE.lock
-
 # Backward-compatibility aliases
 BiometricVerificationEngine = BiometricTrackingEngine
 BiometricVerificationEngineV5 = BiometricTrackingEngine
 
-# Expose state dictionaries directly for legacy introspection
-active_tracks = _DEFAULT_ENGINE.active_tracks
-track_last_seen = _DEFAULT_ENGINE.track_last_seen
-track_first_seen = _DEFAULT_ENGINE.track_first_seen
-track_keypoints = _DEFAULT_ENGINE.track_keypoints
-limb_cooldowns = _DEFAULT_ENGINE.limb_cooldowns
-identified_cooldowns = _DEFAULT_ENGINE.identified_cooldowns
+# =====================================================================
+# Canonical Shared Engine Singleton (Lazy Composition Root)
+# =====================================================================
+_DEFAULT_ENGINE: Optional[BiometricTrackingEngine] = None
+_ENGINE_LOCK = threading.RLock()
+
+# Shared legacy dictionary caches (kept for backward-compatible standalone test mutation)
 track_votes: Dict[int, List[str]] = {}
 track_consensus_name: Dict[int, str] = {}
+frame_count: int = 0
 
-encrypted_audit_logger = _DEFAULT_ENGINE.encrypted_audit_logger
+
+def get_engine() -> BiometricTrackingEngine:
+    """Canonical composition root: thread-safe lazy initializer for the shared engine."""
+    global _DEFAULT_ENGINE
+    if _DEFAULT_ENGINE is None:
+        with _ENGINE_LOCK:
+            if _DEFAULT_ENGINE is None:
+                _DEFAULT_ENGINE = BiometricTrackingEngine()
+    return _DEFAULT_ENGINE
+
+
+def set_engine(engine_instance: Optional[BiometricTrackingEngine]) -> None:
+    """Allows test fixtures or custom applications to override the shared engine."""
+    global _DEFAULT_ENGINE
+    with _ENGINE_LOCK:
+        _DEFAULT_ENGINE = engine_instance
+
+
+def reset_engine() -> None:
+    """Resets the shared engine instance (primarily for isolated test teardown)."""
+    global _DEFAULT_ENGINE
+    with _ENGINE_LOCK:
+        if _DEFAULT_ENGINE is not None:
+            try:
+                _DEFAULT_ENGINE.stop()
+            except Exception:
+                pass
+        _DEFAULT_ENGINE = None
 
 
 def get_audit_logger():
     """Returns the thread-safe encrypted audit logger."""
-    return _DEFAULT_ENGINE.encrypted_audit_logger
+    return get_engine().encrypted_audit_logger
 
 
 def set_pose_only_mode(enabled: bool) -> None:
     """Configures privacy-compliant pose-only estimation mode."""
-    _DEFAULT_ENGINE.set_pose_only(enabled)
+    get_engine().set_pose_only(enabled)
 
 
 def get_pose_only_mode() -> bool:
-    return _DEFAULT_ENGINE.is_pose_only
+    return get_engine().is_pose_only
 
 
 def reload_biometric_db() -> None:
     """Hot-reloads vector index from disk."""
-    _DEFAULT_ENGINE.reload_index()
+    get_engine().reload_index()
 
 
 def l2_normalize(vector) -> np.ndarray:
@@ -90,30 +110,83 @@ def query_vector_db(query_emb, index_obj, meta_dict, threshold=0.68) -> Tuple[st
     return "Unknown", dist
 
 
-frame_count = 0
-
-
 def handle_face_embedding_result(track_id: int, emb: Optional[np.ndarray], ratio: Any) -> None:
     """Delegates face embedding result directly to BiometricTrackingEngine."""
-    global frame_count
-    _DEFAULT_ENGINE.frame_count = frame_count
-    _DEFAULT_ENGINE._handle_embedding_result(track_id, emb, ratio)
+    eng = get_engine()
+    eng.frame_count = frame_count
+    eng._handle_embedding_result(track_id, emb, ratio)
 
 
 def process_single_frame(frame: np.ndarray) -> np.ndarray:
     """Processes frame through the canonical BiometricTrackingEngine."""
-    res = _DEFAULT_ENGINE.process_frame(frame, annotate=True)
+    res = get_engine().process_frame(frame, annotate=True)
     return res.annotated_frame
 
 
-def __getattr__(name):
-    """Dynamic resolution for index, metadata, and mode properties."""
+def __getattr__(name: str) -> Any:
+    """
+    Dynamic lazy resolution for engine singleton, tracking state dicts, and configuration.
+    Provides 100% backward-compatibility for legacy callers without paying eager model loading costs.
+    """
+    if name in ("engine", "biometric_engine"):
+        return get_engine()
+    if name == "state_lock":
+        return get_engine().lock
+    if name == "active_tracks":
+        return get_engine().active_tracks
+    if name == "track_last_seen":
+        return get_engine().track_last_seen
+    if name == "track_first_seen":
+        return get_engine().track_first_seen
+    if name == "track_keypoints":
+        return get_engine().track_keypoints
+    if name == "limb_cooldowns":
+        return get_engine().limb_cooldowns
+    if name == "identified_cooldowns":
+        return get_engine().identified_cooldowns
+    if name in ("encrypted_audit_logger", "audit_logger"):
+        return get_engine().encrypted_audit_logger
     if name == "index":
-        return _DEFAULT_ENGINE.index
+        return get_engine().index
     if name == "metadata":
-        return _DEFAULT_ENGINE.metadata
-    if name == "frame_count":
-        return _DEFAULT_ENGINE.frame_count
+        return get_engine().metadata
     if name == "POSE_ONLY_MODE":
-        return _DEFAULT_ENGINE.is_pose_only
+        return get_engine().is_pose_only
     raise AttributeError(f"module '{__name__}' has no attribute '{name}'")
+
+
+class _LiveCCTVModule(ModuleType):
+    """Custom ModuleType subclass for live_cctv supporting legacy property setters and state overrides."""
+    def __getattr__(self, name: str) -> Any:
+        return __getattr__(name)
+
+    def __setattr__(self, name: str, value: Any) -> None:
+        if name in ("engine", "biometric_engine"):
+            set_engine(value)
+            return
+        if name == "active_tracks":
+            if _DEFAULT_ENGINE is not None:
+                _DEFAULT_ENGINE.active_tracks = value
+            super().__setattr__(name, value)
+            return
+        if name == "track_last_seen":
+            if _DEFAULT_ENGINE is not None:
+                _DEFAULT_ENGINE.track_last_seen = value
+            super().__setattr__(name, value)
+            return
+        if name == "track_first_seen":
+            if _DEFAULT_ENGINE is not None:
+                _DEFAULT_ENGINE.track_first_seen = value
+            super().__setattr__(name, value)
+            return
+        if name == "frame_count":
+            global frame_count
+            frame_count = value
+            if _DEFAULT_ENGINE is not None:
+                _DEFAULT_ENGINE.frame_count = value
+            super().__setattr__(name, value)
+            return
+        super().__setattr__(name, value)
+
+
+sys.modules[__name__].__class__ = _LiveCCTVModule

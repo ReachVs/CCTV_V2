@@ -161,6 +161,7 @@ class BiometricTrackingEngine:
         detector: Optional[PersonDetector] = None,
         embedder: Optional[FaceEmbedder] = None,
         audit_logger: Optional[AuditLogger] = None,
+        pose_estimator: Optional[PoseOnlyEstimator] = None,
         index_path: Optional[str] = None,
         metadata_path: Optional[str] = None,
         db_path: Optional[str] = None,
@@ -201,28 +202,15 @@ class BiometricTrackingEngine:
         if not os.path.exists(self.bytetrack_cfg):
             self.bytetrack_cfg = "bytetrack.yaml"
 
-        # Person Detector Seam (Ultralytics + ByteTrack + Haar or Scripted test adapter)
-        if detector is not None:
-            self.detector = detector
-        else:
-            self.detector = UltralyticsPersonDetector(
-                tracker_cfg=self.bytetrack_cfg,
-                enable_haar=True
-            )
+        # Person Detector Seam (Lazy loaded unless provided)
+        self._detector: Optional[PersonDetector] = detector
 
         self.jitter_engine = JitterFilterEngine(erratic_threshold=80.0)
         self.face_aligner = YuNetFaceAligner()
         self.fsrcnn_upscaler = FSRCNNUpscaler()
 
-        # Face Embedder Seam (ArcFace or Scripted test adapter)
-        if embedder is not None:
-            self.embedder = embedder
-        else:
-            self.embedder = ArcFaceEmbedder(
-                model_name=self.model_name,
-                face_aligner=self.face_aligner,
-                upscaler=self.fsrcnn_upscaler
-            )
+        # Face Embedder Seam (Lazy loaded unless provided)
+        self._embedder: Optional[FaceEmbedder] = embedder
 
         self.temporal_subsampler = TemporalSubsampler(subsample_interval=3)
 
@@ -233,7 +221,8 @@ class BiometricTrackingEngine:
             self.audit_logger = EncryptedWALAuditLogger(db_path=self.db_path)
         self.encrypted_audit_logger = self.audit_logger  # Backward-compatibility alias
 
-        self.pose_estimator = PoseOnlyEstimator(pose_model_spec=DEFAULT_MODEL_CONFIG.get_effective_pose_model())
+        # Lazy Pose Estimator
+        self._pose_estimator: Optional[PoseOnlyEstimator] = pose_estimator
         self.annotator = FrameAnnotator()
 
         # Privacy mode flag
@@ -261,12 +250,51 @@ class BiometricTrackingEngine:
         # Batch Face Embedder Setup
         self._embedder_queue: List[Dict[str, Any]] = []
         self._embedder_lock = threading.RLock()
-        self._keras_model = None
         self._embedder_running = True
-        self._init_embedder_model()
 
         self._embedder_thread = threading.Thread(target=self._embedder_worker, daemon=True)
         self._embedder_thread.start()
+
+    @property
+    def detector(self) -> PersonDetector:
+        if self._detector is None:
+            self._detector = UltralyticsPersonDetector(
+                tracker_cfg=self.bytetrack_cfg,
+                enable_haar=True
+            )
+        return self._detector
+
+    @detector.setter
+    def detector(self, value: PersonDetector) -> None:
+        self._detector = value
+
+    @property
+    def embedder(self) -> FaceEmbedder:
+        if self._embedder is None:
+            self._embedder = ArcFaceEmbedder(
+                model_name=self.model_name,
+                face_aligner=self.face_aligner,
+                upscaler=self.fsrcnn_upscaler
+            )
+        return self._embedder
+
+    @embedder.setter
+    def embedder(self, value: FaceEmbedder) -> None:
+        self._embedder = value
+
+    @property
+    def pose_estimator(self) -> Optional[PoseOnlyEstimator]:
+        if self._pose_estimator is None:
+            try:
+                self._pose_estimator = PoseOnlyEstimator(pose_model_spec=DEFAULT_MODEL_CONFIG.get_effective_pose_model())
+            except Exception as e:
+                print(f"[BiometricTrackingEngine Warning] Lazy PoseEstimator init failed: {e}")
+                self._pose_estimator = None
+        return self._pose_estimator
+
+    @pose_estimator.setter
+    def pose_estimator(self, value: Optional[PoseOnlyEstimator]) -> None:
+        self._pose_estimator = value
 
     def _get_or_create_session(self, track_id: int, box: Tuple[int, int, int, int], frame_num: int) -> SubjectSession:
         if track_id not in self._sessions:
@@ -390,21 +418,23 @@ class BiometricTrackingEngine:
             self.detector.haar_cascade = cascade
 
     def _init_yolo(self):
-        if not hasattr(self, "detector") or self.detector is None:
-            self.detector = UltralyticsPersonDetector(tracker_cfg=self.bytetrack_cfg, enable_haar=True)
+        if self._detector is None:
+            self._detector = UltralyticsPersonDetector(tracker_cfg=self.bytetrack_cfg, enable_haar=True)
 
     @property
     def _keras_model(self) -> Any:
-        return getattr(self.embedder, "keras_model", None)
+        if self._embedder is not None:
+            return getattr(self._embedder, "keras_model", None)
+        return None
 
     @_keras_model.setter
     def _keras_model(self, model: Any) -> None:
-        if hasattr(self.embedder, "keras_model"):
-            self.embedder.keras_model = model
+        if self._embedder is not None and hasattr(self._embedder, "keras_model"):
+            self._embedder.keras_model = model
 
     def _init_embedder_model(self):
-        if hasattr(self.embedder, "_init_model"):
-            self.embedder._init_model()
+        if self._embedder is not None and hasattr(self._embedder, "_init_model"):
+            self._embedder._init_model()
 
     def reload_index(self, index_path: Optional[str] = None, metadata_path: Optional[str] = None) -> None:
         """Atomic hot-reload of FAISS vector index and metadata without dropping active tracks."""

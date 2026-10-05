@@ -30,8 +30,19 @@ from src.inference.temporal_subsampler import TemporalSubsampler
 from src.utils.jitter_filter import JitterFilterEngine
 from src.utils.face_align import YuNetFaceAligner
 from src.utils.fsrcnn_upscaler import FSRCNNUpscaler
-from src.rendering.annotator import FrameAnnotator
+from src.rendering.annotator import (
+    Annotator,
+    CyberpunkHUDAnnotator,
+    FrameAnnotator,
+    NoOpAnnotator,
+    ScriptedAnnotator
+)
 from src.domain.subject_session import SubjectSession, TrackStatus
+from src.inference.consensus import (
+    IdentityConsensus,
+    MatchCandidate,
+    ConsensusDecision
+)
 from src.inference.person_detector import (
     PersonDetector,
     UltralyticsPersonDetector,
@@ -108,40 +119,14 @@ from src.database.vector_store import (
     FAISSIndexAdapter,
     InMemoryIndexAdapter
 )
-
-
-# =====================================================================
-# Internal Utilities
-# =====================================================================
-
-def compute_box_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
-    """Computes Intersection-over-Union (IoU) between bounding boxes (x1, y1, x2, y2)."""
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    interArea = max(0, xB - xA) * max(0, yB - yA)
-    boxAArea = max(1, (boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
-    boxBArea = max(1, (boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
-    return float(interArea) / float(boxAArea + boxBArea - interArea + 1e-6)
-
-
-def compute_box_containment(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
-    """Computes Intersection-over-Smaller (IoS) / Containment ratio between two bounding boxes.
-    Returns the fraction of the smaller box's area that overlaps with the other box.
-    Range: [0.0, 1.0].
-    """
-    xA = max(boxA[0], boxB[0])
-    yA = max(boxA[1], boxB[1])
-    xB = min(boxA[2], boxB[2])
-    yB = min(boxA[3], boxB[3])
-    interArea = max(0, xB - xA) * max(0, yB - yA)
-    if interArea <= 0:
-        return 0.0
-    areaA = max(1, (boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
-    areaB = max(1, (boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
-    smallerArea = min(areaA, areaB)
-    return float(interArea) / float(smallerArea)
+from src.inference.tracking_pre_filter import (
+    TrackingPreFilter,
+    PreFilterResult,
+    FilteredCandidate,
+    compute_box_iou,
+    compute_box_containment,
+)
+from src.inference.biometric_scheduler import BiometricIngestionScheduler
 
 
 # =====================================================================
@@ -173,6 +158,8 @@ class BiometricTrackingEngine:
         model_name: str = "ArcFace",
         batch_size: int = 32,
         timeout_frames: int = 3,
+        annotator: Optional[Annotator] = None,
+        consensus: Optional[IdentityConsensus] = None,
     ):
         self.lock = threading.RLock()
         self.l2_threshold = l2_threshold
@@ -183,6 +170,16 @@ class BiometricTrackingEngine:
         self.model_name = model_name
         self.batch_size = batch_size
         self.timeout_frames = timeout_frames
+
+        # Identity Consensus Seam
+        self.consensus: IdentityConsensus = consensus or IdentityConsensus(
+            consensus_votes=consensus_votes,
+            history_window=history_window,
+            margin_threshold=margin_threshold,
+            side_profile_threshold=0.30,
+            max_scanning_attempts=12,
+            min_unknown_crops=12
+        )
 
         # Resolve paths
         data_dir = os.path.join(PROJECT_ROOT, "data")
@@ -223,7 +220,7 @@ class BiometricTrackingEngine:
 
         # Lazy Pose Estimator
         self._pose_estimator: Optional[PoseOnlyEstimator] = pose_estimator
-        self.annotator = FrameAnnotator()
+        self.annotator: Annotator = annotator if annotator is not None else CyberpunkHUDAnnotator()
 
         # Privacy mode flag
         self._pose_only_mode = False
@@ -234,18 +231,20 @@ class BiometricTrackingEngine:
         self.active_tracks: Dict[int, str] = {}
         self.track_last_seen: Dict[int, int] = {}
         self.track_first_seen: Dict[int, int] = {}
-        self.track_last_submitted_frame: Dict[int, int] = {}
-        self.recent_track_history: Dict[int, Dict[str, Any]] = {}
         self.track_keypoints: Dict[int, List[Dict[str, float]]] = {}
-        self.limb_cooldowns: Dict[int, int] = {}
         self.identified_cooldowns: Dict[str, int] = {}
-        self.active_identity_claims: Dict[str, int] = {}
         self.track_cache: Dict[int, Dict[str, Any]] = {}
-        # Crossover Contention & Anti-ID-Swapping
-        self.contended_tracks: Dict[int, int] = {}  # track_id -> consecutive non-overlap frame count
-        self.contention_blacklist: Dict[int, int] = {}  # track_id -> blacklist expiration frame
-        # Head/Shoulder Pre-Gating & Limb Noise Suppression
-        self.head_presence_cache: Dict[int, int] = {}  # track_id -> presence validation expiration frame (15-frame TTL)
+
+        # Deep Ingestion & Pre-Filtering Modules
+        self.pre_filter = TrackingPreFilter(
+            face_aligner=self.face_aligner,
+            pose_estimator=self.pose_estimator,
+            jitter_engine=self.jitter_engine,
+        )
+        self.biometric_scheduler = BiometricIngestionScheduler(
+            jitter_engine=self.jitter_engine,
+            temporal_subsampler=self.temporal_subsampler,
+        )
 
         # Batch Face Embedder Setup
         self._embedder_queue: List[Dict[str, Any]] = []
@@ -254,6 +253,15 @@ class BiometricTrackingEngine:
 
         self._embedder_thread = threading.Thread(target=self._embedder_worker, daemon=True)
         self._embedder_thread.start()
+
+    @property
+    def active_identity_claims(self) -> Dict[str, int]:
+        """Active identity leases managed by IdentityConsensus."""
+        return self.consensus.active_identity_claims
+
+    @active_identity_claims.setter
+    def active_identity_claims(self, value: Dict[str, int]) -> None:
+        self.consensus.active_identity_claims = value
 
     @property
     def detector(self) -> PersonDetector:
@@ -295,6 +303,57 @@ class BiometricTrackingEngine:
     @pose_estimator.setter
     def pose_estimator(self, value: Optional[PoseOnlyEstimator]) -> None:
         self._pose_estimator = value
+        if hasattr(self, "pre_filter") and self.pre_filter is not None:
+            self.pre_filter.pose_estimator = value
+
+    # Backward-compatibility property facades for tests inspecting internal tables
+    @property
+    def head_presence_cache(self) -> Dict[int, int]:
+        return self.pre_filter.head_presence_cache
+
+    @head_presence_cache.setter
+    def head_presence_cache(self, val: Dict[int, int]) -> None:
+        self.pre_filter.head_presence_cache = val
+
+    @property
+    def contended_tracks(self) -> Dict[int, int]:
+        return self.pre_filter.contended_tracks
+
+    @contended_tracks.setter
+    def contended_tracks(self, val: Dict[int, int]) -> None:
+        self.pre_filter.contended_tracks = val
+
+    @property
+    def contention_blacklist(self) -> Dict[int, int]:
+        return self.pre_filter.contention_blacklist
+
+    @contention_blacklist.setter
+    def contention_blacklist(self, val: Dict[int, int]) -> None:
+        self.pre_filter.contention_blacklist = val
+
+    @property
+    def recent_track_history(self) -> Dict[int, Dict[str, Any]]:
+        return self.pre_filter.recent_track_history
+
+    @recent_track_history.setter
+    def recent_track_history(self, val: Dict[int, Dict[str, Any]]) -> None:
+        self.pre_filter.recent_track_history = val
+
+    @property
+    def limb_cooldowns(self) -> Dict[int, int]:
+        return self.biometric_scheduler.limb_cooldowns
+
+    @limb_cooldowns.setter
+    def limb_cooldowns(self, val: Dict[int, int]) -> None:
+        self.biometric_scheduler.limb_cooldowns = val
+
+    @property
+    def track_last_submitted_frame(self) -> Dict[int, int]:
+        return self.biometric_scheduler.track_last_submitted_frame
+
+    @track_last_submitted_frame.setter
+    def track_last_submitted_frame(self, val: Dict[int, int]) -> None:
+        self.biometric_scheduler.track_last_submitted_frame = val
 
     def _get_or_create_session(self, track_id: int, box: Tuple[int, int, int, int], frame_num: int) -> SubjectSession:
         if track_id not in self._sessions:
@@ -479,56 +538,8 @@ class BiometricTrackingEngine:
         track_id: int,
         current_frame_num: int
     ) -> bool:
-        """
-        Validates whether candidate box contains upper-body or head evidence (pose keypoints
-        0..6 [nose, eyes, ears, shoulders] with conf >= 0.35, or a detected face).
-        Maintains a 15-frame TTL cache per track to preserve 30+ FPS throughput.
-        """
-        with self.lock:
-            cached_exp = self.head_presence_cache.get(track_id, 0)
-            if current_frame_num <= cached_exp:
-                return True
-
-        fx1, fy1, fx2, fy2 = box
-        box_h = fy2 - fy1
-        box_w = fx2 - fx1
-
-        # 1. Fast Face Detection Check on Upper Torso/Head Crop (YuNet C++ OpenCV DNN: ~2-4ms)
-        h_frame, w_frame = frame.shape[:2]
-        crop_y1 = max(0, fy1 - int(box_h * 0.10))
-        crop_y2 = min(h_frame, fy1 + int(box_h * 0.55))
-        crop_x1 = max(0, fx1 - int(box_w * 0.15))
-        crop_x2 = min(w_frame, fx2 + int(box_w * 0.15))
-
-        if crop_y2 > crop_y1 and crop_x2 > crop_x1:
-            head_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2]
-            if head_crop.size > 0:
-                try:
-                    aligned = self.face_aligner.align_face(head_crop, strict=True)
-                    if aligned is not None:
-                        with self.lock:
-                            self.head_presence_cache[track_id] = current_frame_num + 15
-                        return True
-                except Exception:
-                    pass
-
-        # 2. Pose Keypoints Fallback (0: Nose, 1..2: Eyes, 3..4: Ears, 5..6: Shoulders)
-        # Evaluated only when YuNet face detection returns None (e.g. back turned or low lighting)
-        if self.pose_estimator is not None and getattr(self.pose_estimator, "yolo_pose", None) is not None:
-            try:
-                kpts = self.pose_estimator.estimate_pose_keypoints(frame, box)
-                if kpts and len(kpts) > 0:
-                    for kp in kpts:
-                        k_id = kp.get("id", -1)
-                        k_conf = kp.get("conf", 0.0)
-                        if 0 <= k_id <= 6 and k_conf >= 0.35:
-                            with self.lock:
-                                self.head_presence_cache[track_id] = current_frame_num + 15
-                            return True
-            except Exception:
-                pass
-
-        return False
+        """Validates upper-body or head evidence via TrackingPreFilter deep module."""
+        return self.pre_filter.has_head_or_shoulder_presence(frame, box, track_id, current_frame_num)
 
     # -----------------------------------------------------------------
     # Primary Seam: process_frame
@@ -551,161 +562,67 @@ class BiometricTrackingEngine:
         scale_y = h_frame / float(target_h)
 
         small_frame = cv2.resize(frame, (target_w, target_h), interpolation=cv2.INTER_LINEAR)
-        annotated = frame.copy() if annotate else frame
+        annotated = frame.copy() if (annotate and not isinstance(self.annotator, NoOpAnnotator)) else frame
 
         # 1. Motion Tracking via PersonDetector Seam
         detections = self.detector.detect_and_track(small_frame)
 
-        # 2. Spatial Jitter Filtering & Geometric Validation
-        raw_candidates: List[Dict[str, Any]] = []
-        for det in detections:
-            box = det.box
-            conf = det.conf
-            track_id = det.track_id
-            # Dual-Threshold Track Initiation:
-            # Active/confirmed tracks maintain continuity down to conf >= 0.25.
-            # Brand new tracks require higher confidence (conf >= 0.45) to prevent spurious phantom initiation.
-            is_active = (track_id in self.active_tracks) or (track_id in self.track_cache)
-            min_conf = 0.25 if is_active else 0.45
-            if float(conf) < min_conf:
-                continue
-            x1 = int(box[0] * scale_x)
-            y1 = int(box[1] * scale_y)
-            x2 = int(box[2] * scale_x)
-            y2 = int(box[3] * scale_y)
+        # 2. TrackingPreFilter Deep Seam: Jitter Filtering, NMS & Crossover Contention
+        with self.lock:
+            active_tids = set(self.active_tracks.keys())
+            confirmed_tids = {tid for tid, c in self.track_cache.items() if c.get("is_confirmed", False)}
+            for tid, sess in self._sessions.items():
+                if sess.is_confirmed:
+                    confirmed_tids.add(tid)
 
-            fx1, fy1, fx2, fy2 = self.jitter_engine.filter_box(track_id, (x1, y1, x2, y2), confidence=float(conf))
-            box_h = fy2 - fy1
-            box_w = fx2 - fx1
-            aspect_ratio = float(box_w) / float(box_h) if box_h > 0 else 0.0
+        pre_filter_res = self.pre_filter.filter_and_arbitrate(
+            frame=frame,
+            detections=detections,
+            scale_x=scale_x,
+            scale_y=scale_y,
+            current_frame_num=current_frame_num,
+            active_track_ids=active_tids,
+            confirmed_track_ids=confirmed_tids,
+        )
 
-            if box_h < 80 or box_w < 80:
-                continue
-            if aspect_ratio < 0.40 or aspect_ratio > 1.80:
-                continue
-
-            area = box_h * box_w
-            is_confirmed = self.track_cache.get(track_id, {}).get("is_confirmed", False)
-
-            # Pre-Admission Head/Shoulder Filter:
-            # Drop bare limb candidates (hands, arms, legs) before they enter active_tracks or scanning
-            if not is_confirmed:
-                if not self._has_head_or_shoulder_presence(frame, (fx1, fy1, fx2, fy2), track_id, current_frame_num):
-                    if track_id in self.active_tracks and self.active_tracks[track_id].startswith("Scanning"):
-                        self.purge_track(track_id)
-                    continue
-
-            raw_candidates.append({
-                "track_id": track_id,
-                "box": (fx1, fy1, fx2, fy2),
-                "conf": float(conf),
-                "area": area,
-                "is_confirmed": is_confirmed
-            })
-
-        # Sort candidates: Confirmed first, then larger body area, then higher confidence
-        raw_candidates.sort(key=lambda c: (1 if c["is_confirmed"] else 0, c["area"], c["conf"]), reverse=True)
-
-        # Spatio-Temporal Containment & Overlap NMS
-        current_frame_boxes: Dict[int, Tuple[int, int, int, int]] = {}
-        for cand in raw_candidates:
-            cid = cand["track_id"]
-            cbox = cand["box"]
-            c_confirmed = cand["is_confirmed"]
-
-            # 1) Check against already accepted boxes in this frame
-            suppressed = False
-            for acc_id, acc_box in current_frame_boxes.items():
-                iou = compute_box_iou(cbox, acc_box)
-                containment = compute_box_containment(cbox, acc_box)
-                if iou > 0.35 or containment > 0.40:
-                    is_established_cid = c_confirmed or (cid in self.active_tracks) or (cid in self.track_cache)
-                    is_established_acc = (acc_id in self.active_tracks) or (acc_id in self.track_cache)
-                    if is_established_cid and is_established_acc and iou <= 0.65:
-                        pass
-                    else:
-                        suppressed = True
-                        break
-
-            # 2) Check against recent confirmed tracks in history (within last 15 frames)
-            if not suppressed and not c_confirmed:
-                for hist_id, hist_info in self.recent_track_history.items():
-                    if hist_id != cid and hist_info.get("confirmed", False):
-                        if (current_frame_num - hist_info.get("last_seen", 0)) <= 15:
-                            iou = compute_box_iou(cbox, hist_info["box"])
-                            containment = compute_box_containment(cbox, hist_info["box"])
-                            if iou > 0.35 or containment > 0.40:
-                                if (cid in self.active_tracks) and iou <= 0.65:
-                                    pass
-                                else:
-                                    suppressed = True
-                                    break
-
-            if suppressed:
-                if not c_confirmed:
-                    self.purge_track(cid)
-                continue
-
-            current_frame_boxes[cid] = cbox
-
+        current_frame_boxes = pre_filter_res.current_frame_boxes
         active_subject_list: List[TrackedSubject] = []
         new_audit_events: List[Dict[str, Any]] = []
 
-        # Crossover Contention & Pairwise Overlap Evaluation
         with self.lock:
-            # 1. Update Hysteresis for currently contended tracks
-            for c_tid in list(self.contended_tracks.keys()):
-                if c_tid in current_frame_boxes:
-                    c_box = current_frame_boxes[c_tid]
-                    max_iou = 0.0
-                    max_cont = 0.0
-                    for other_tid, other_box in current_frame_boxes.items():
-                        if other_tid == c_tid:
-                            continue
-                        max_iou = max(max_iou, compute_box_iou(c_box, other_box))
-                        max_cont = max(max_cont, compute_box_containment(c_box, other_box))
+            # Purge suppressed active scanning tracks
+            for s_tid in pre_filter_res.suppressed_track_ids:
+                if s_tid in self.active_tracks and self.active_tracks[s_tid].startswith("Scanning"):
+                    self.purge_track(s_tid)
 
-                    if max_iou < 0.15 and max_cont < 0.20:
-                        self.contended_tracks[c_tid] += 1
-                        if self.contended_tracks[c_tid] >= 3:
-                            del self.contended_tracks[c_tid]
-                            if c_tid in self._sessions:
-                                self._sessions[c_tid].reset_contention()
-                    else:
-                        self.contended_tracks[c_tid] = 0
-                else:
-                    self.contended_tracks.pop(c_tid, None)
+            # Handle resolved contention tracks
+            for r_tid in pre_filter_res.resolved_contended_track_ids:
+                if r_tid in self._sessions:
+                    self._sessions[r_tid].reset_contention()
+                self.active_tracks[r_tid] = f"Scanning Track {r_tid}"
+                t_c = self.track_cache.setdefault(r_tid, {})
+                t_c["name"] = f"Scanning Track {r_tid}"
+                t_c["is_confirmed"] = False
 
-            # 2. Detect New Pairwise Contention
-            prev_contended = set(self.contended_tracks.keys())
-            box_items = list(current_frame_boxes.items())
-            for i in range(len(box_items)):
-                tid1, b1 = box_items[i]
-                for j in range(i + 1, len(box_items)):
-                    tid2, b2 = box_items[j]
-                    iou_pair = compute_box_iou(b1, b2)
-                    cont_pair = compute_box_containment(b1, b2)
-                    if iou_pair > 0.30 or cont_pair > 0.40:
-                        for tid in (tid1, tid2):
-                            self.contended_tracks[tid] = 0
-                            self.contention_blacklist[tid] = current_frame_num + 45
-                            session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
-                            session.enter_contention(blacklist_expiration_frame=current_frame_num + 45)
-                            t_cache = self.track_cache.setdefault(tid, {})
-                            t_cache["is_confirmed"] = False
-                            t_cache["history"] = []
-                            self.active_tracks[tid] = f"Contended Track {tid}"
+            # Handle newly contended tracks & audit events
+            for tid in pre_filter_res.newly_contended_track_ids:
+                session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
+                session.enter_contention(blacklist_expiration_frame=current_frame_num + 45)
+                t_cache = self.track_cache.setdefault(tid, {})
+                t_cache["is_confirmed"] = False
+                t_cache["history"] = []
+                self.active_tracks[tid] = f"Contended Track {tid}"
 
-                        if tid1 not in prev_contended or tid2 not in prev_contended:
-                            new_audit_events.append({
-                                "event_type": "CROSSOVER_CONTENTION",
-                                "frame": current_frame_num,
-                                "track_id_1": tid1,
-                                "track_id_2": tid2,
-                                "iou": round(float(iou_pair), 3),
-                                "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                "message": f"Tracks {tid1} and {tid2} entered crossover contention (IoU: {iou_pair:.2f}). Identities unlocked."
-                            })
+            for tid1, tid2, iou_val in pre_filter_res.newly_contended_pairs:
+                new_audit_events.append({
+                    "event_type": "CROSSOVER_CONTENTION",
+                    "frame": current_frame_num,
+                    "track_id_1": tid1,
+                    "track_id_2": tid2,
+                    "iou": round(float(iou_val), 3),
+                    "timestamp": datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
+                    "message": f"Tracks {tid1} and {tid2} entered crossover contention (IoU: {iou_val:.2f}). Identities unlocked."
+                })
 
         # 3. Process Each Tracked Box
         for track_id, curr_box in current_frame_boxes.items():
@@ -776,49 +693,30 @@ class BiometricTrackingEngine:
                     "confirmed": is_confirmed
                 }
 
-            # Tiny face distance cutoff
-            if box_h < 90 or box_w < 45:
-                with self.lock:
-                    if track_id in self.active_tracks and self.active_tracks[track_id].startswith("Scanning"):
-                        self.active_tracks[track_id] = "Unknown Person"
-                        t_c = self.track_cache.setdefault(track_id, {})
-                        t_c["name"] = "Unknown Person"
-                        t_c["is_confirmed"] = True
-                subject_name = "Unknown Person"
-            else:
-                last_sub_frame = self.track_last_submitted_frame.get(track_id, 0)
-                is_erratic = self.jitter_engine.is_erratic_movement(track_id, threshold=80.0)
-                is_in_cooldown = current_frame_num < self.limb_cooldowns.get(track_id, 0)
+            # Biometric Scheduler Deep Seam: Governs extraction admission, cooldowns, and cadence
+            session = self._get_or_create_session(track_id, curr_box, current_frame_num)
+            is_contended = (track_id in self.contended_tracks)
+            if not is_contended and not is_confirmed:
+                for conf_tid, conf_info in self.recent_track_history.items():
+                    if conf_tid != track_id and conf_info.get("confirmed", False):
+                        if compute_box_iou(curr_box, conf_info["box"]) > 0.35 or compute_box_containment(curr_box, conf_info["box"]) > 0.40:
+                            is_contended = True
+                            break
 
-                # Bounding Box Contention Filter
-                is_contended = (track_id in self.contended_tracks)
-                if not is_contended and not is_confirmed:
-                    for conf_tid, conf_info in self.recent_track_history.items():
-                        if conf_tid != track_id and conf_info.get("confirmed", False):
-                            if compute_box_iou(curr_box, conf_info["box"]) > 0.35 or compute_box_containment(curr_box, conf_info["box"]) > 0.40:
-                                is_contended = True
-                                break
-
-                # Smart Tracker-Gating: Bypasses extraction once confirmed or while in contention
-                should_extract_crop = (not is_erratic) and (not is_in_cooldown) and (not is_contended)
-                should_extract_crop = should_extract_crop and (
-                    ((not is_confirmed) and track_age >= 2) or (is_confirmed and (current_frame_num - last_sub_frame >= 15))
-                )
-
-                subsampler_ready = True if not is_confirmed else self.temporal_subsampler.should_process_biometrics(track_id)
-                if should_extract_crop and subsampler_ready:
-                    # Unconfirmed scanning tracks submit crops every 2 frames for fast identification (<0.3s).
-                    # Once confirmed, interval relaxes to 15 frames to conserve CPU/GPU.
-                    interval = 15 if is_confirmed else 2
-                    if last_sub_frame == 0 or (current_frame_num - last_sub_frame >= interval):
-                        if temp_crop is not None and crop_y2 - crop_y1 >= 80 and crop_x2 - crop_x1 >= 80:
-                            self.track_last_submitted_frame[track_id] = current_frame_num
-                            self._add_crop_to_embedder(track_id, temp_crop.copy(), current_frame_num)
+            crop_shape = (crop_y2 - crop_y1, crop_x2 - crop_x1) if temp_crop is not None else None
+            if self.biometric_scheduler.should_extract(session, crop_shape, current_frame_num, is_contended=is_contended):
+                self.biometric_scheduler.record_submission(track_id, current_frame_num)
+                self._add_crop_to_embedder(track_id, temp_crop.copy(), current_frame_num)
 
             if subject_name is None:
                 continue
 
-            is_scanning = subject_name.startswith("Scanning")
+            is_contended_flag = (track_id in self.contended_tracks)
+            if is_contended_flag:
+                is_confirmed = False
+                subject_name = f"Contended Track {track_id}"
+
+            is_scanning = subject_name.startswith("Scanning") or (subject_name.startswith("Contended") and not is_contended_flag)
             is_unverified = subject_name.startswith("Unverified")
             is_unknown = subject_name in ["Unknown", "Ambiguous Match", "Unknown Person"]
 
@@ -836,16 +734,11 @@ class BiometricTrackingEngine:
 
             # Metadata resolution
             meta_dict = {}
-            if not is_scanning and not is_unverified and not is_unknown and isinstance(self.metadata, dict):
+            if not is_scanning and not is_unverified and not is_unknown and not is_contended_flag and isinstance(self.metadata, dict):
                 for k, val in self.metadata.items():
                     if isinstance(val, dict) and val.get("name", "").lower() == subject_name.lower():
                         meta_dict = val
                         break
-
-            is_contended_flag = (track_id in self.contended_tracks)
-            if is_contended_flag:
-                is_confirmed = False
-                subject_name = f"Contended Track {track_id}"
             curr_status = (
                 TrackStatus.CONTENDED.value if is_contended_flag else
                 (TrackStatus.UNVERIFIED.value if is_unverified else
@@ -880,8 +773,10 @@ class BiometricTrackingEngine:
                 self.purge_track(tid)
 
         # 6. Visual Overlay HUD Rendering
-        if annotate:
-            annotated = self.annotator.annotate(annotated, active_subject_list)
+        if annotate and not isinstance(self.annotator, NoOpAnnotator):
+            duration_so_far = max(1e-4, time.time() - start_time)
+            fps_so_far = round(1.0 / duration_so_far, 1)
+            annotated = self.annotator.annotate(annotated, active_subject_list, fps=fps_so_far)
 
         duration = max(1e-4, time.time() - start_time)
         fps = round(1.0 / duration, 1)
@@ -918,7 +813,12 @@ class BiometricTrackingEngine:
                 return str(entry)
             return "Unknown"
 
-    def verify_face(self, embedding: Optional[np.ndarray], face_center_ratio: float = 0.5) -> Tuple[str, float, float, float]:
+    def verify_face(
+        self,
+        embedding: Optional[np.ndarray],
+        face_center_ratio: float = 0.5,
+        is_side_profile: bool = False
+    ) -> Tuple[str, float, float, float]:
         """Performs true Top-2 inter-subject margin gating and vector matching."""
         if embedding is None:
             return "Unknown", 999.0, 999.0, 0.0
@@ -952,7 +852,9 @@ class BiometricTrackingEngine:
         idx1 = int(indices[0][0])
         name1 = self.get_identity(idx1)
 
-        if dist1 > self.l2_threshold or name1 in ["Unknown", ""]:
+        # Pose-aware strict threshold: side profile crops require tighter distance (squared L2 < 0.30 vs default 0.68)
+        effective_threshold = min(self.l2_threshold, 0.30) if is_side_profile else self.l2_threshold
+        if dist1 > effective_threshold or name1 in ["Unknown", ""]:
             return "Unknown", dist1, 999.0, quality_norm
 
         # Find the first nearest neighbor belonging to a DIFFERENT subject (Inter-Subject Gating)
@@ -970,9 +872,10 @@ class BiometricTrackingEngine:
                 break
 
         # Only enforce margin threshold if a distinct subject was found in top-k
+        effective_margin = max(self.margin_threshold, 0.20) if is_side_profile else self.margin_threshold
         if diff_subject_found:
             margin = abs(dist_diff_subject - dist1)
-            if margin < self.margin_threshold:
+            if margin < effective_margin:
                 return "Ambiguous Match", dist1, dist_diff_subject, quality_norm
             dist2 = dist_diff_subject
         else:
@@ -986,184 +889,90 @@ class BiometricTrackingEngine:
         embedding: Optional[np.ndarray],
         face_center_ratio: float = 0.5,
         track_age: Optional[int] = None,
-        active_track_ids: Optional[List[int]] = None
+        active_track_ids: Optional[List[int]] = None,
+        is_side_profile: bool = False
     ) -> Tuple[str, Dict[str, Any]]:
         """Multi-frame consensus voting and track identity locking protocol."""
         with self.lock:
-            # Clean up stale claims where the claimant is no longer active
-            stale_claims = []
-            for name, claimant_tid in list(self.active_identity_claims.items()):
-                if claimant_tid == track_id:
-                    continue
-                last_seen_frame = self.track_last_seen.get(claimant_tid, 0)
-                if (active_track_ids is not None and claimant_tid not in active_track_ids) or (self.frame_count - last_seen_frame > 15):
-                    stale_claims.append(name)
-            for name in stale_claims:
-                self.active_identity_claims.pop(name, None)
-
+            # Clean up dead tracks if active_track_ids provided
             if active_track_ids is not None:
-                dead_tids = [tid for tid in list(self.track_cache.keys()) if tid not in active_track_ids and tid != track_id]
+                dead_tids = [tid for tid in list(self.track_last_seen.keys()) if tid not in active_track_ids and tid != track_id]
                 for tid in dead_tids:
                     if self.frame_count - self.track_last_seen.get(tid, 0) > 30:
                         self.purge_track(tid)
 
-            track = self.track_cache.setdefault(track_id, {})
-            track.setdefault("name", f"Scanning Track {track_id}")
-            track.setdefault("is_confirmed", False)
-            track.setdefault("is_spatial_collision", False)
-            track.setdefault("best_norm", 0.0)
-            track.setdefault("history", [])
-            track.setdefault("attempts", 0)
-            track.setdefault("valid_face_crops", 0)
-            track.setdefault("failed_attempts", 0)
-            track.setdefault("age", 0)
-            track["age"] += 1
+            # Retrieve or create session
+            session = self._sessions.get(track_id)
+            if session is None:
+                box = self.track_cache.get(track_id, {}).get("box", (0, 0, 0, 0))
+                session = self._get_or_create_session(track_id, box, self.frame_count)
+            else:
+                session.last_seen = max(session.last_seen, self.frame_count)
 
-            effective_age = track_age if track_age is not None else max(3, track["age"])
+            if track_age is not None:
+                session.first_seen = session.last_seen - track_age + 1
 
-            # Confirmed Identity Hysteresis Lock-In
-            if track["is_confirmed"] and track["name"] not in ["Unknown Person", "Scanning", "Ambiguous Match"] and not track["name"].startswith("Scanning"):
-                self.active_identity_claims[track["name"]] = track_id
-                return track["name"], {
-                    "bypassed": True,
-                    "norm": float(np.linalg.norm(embedding)) if embedding is not None else 0.0,
-                    "cached": track["name"],
-                    "confirmed": True
-                }
+            # Prepare match candidate if embedding is present
+            candidate = None
+            if embedding is not None:
+                embedding = np.array(embedding, dtype=np.float32).flatten()
+                matched_name, d1, d2, current_norm = self.verify_face(
+                    embedding, face_center_ratio, is_side_profile=is_side_profile
+                )
+                candidate = MatchCandidate(
+                    name=matched_name,
+                    dist1=d1,
+                    dist2=d2,
+                    norm=current_norm,
+                    is_side_profile=is_side_profile
+                )
 
-            # Smart bypass for confirmed Unknown Person
-            if track["is_confirmed"] and track["name"] == "Unknown Person":
-                if embedding is not None:
-                    track["is_confirmed"] = False
-                    track["is_spatial_collision"] = False
-                    track["name"] = f"Scanning Track {track_id}"
-                    track["attempts"] = 0
-                    track["valid_face_crops"] = 0
-                    track["failed_attempts"] = 0
-                    track["history"] = []
-                else:
-                    return "Unknown Person", {
-                        "bypassed": True,
-                        "norm": 0.0,
-                        "cached": "Unknown Person"
-                    }
+            # Delegate to IdentityConsensus
+            last_seen_fn = lambda tid: self.track_last_seen.get(tid, 0)
+            decision = self.consensus.evaluate(
+                session=session,
+                candidate=candidate,
+                current_frame=self.frame_count,
+                active_track_ids=active_track_ids,
+                last_seen_lookup=last_seen_fn,
+                effective_age=track_age
+            )
 
-            # Tentative Track Gating (effective_age < 3)
-            if effective_age < 3 and not track["is_confirmed"]:
-                track["name"] = f"Scanning Track {track_id}"
-                return f"Scanning Track {track_id}", {"tentative": True, "age": effective_age}
+            # Keep track_cache synchronized for backwards-compatibility
+            self.track_cache[track_id] = session.to_cache_dict()
+            self.track_cache[track_id]["history"] = list(self.consensus.get_history(track_id))
 
-            # Non-face crop handling
-            if embedding is None:
-                track["failed_attempts"] += 1
-                return track["name"], {"failed": True, "confirmed": track["is_confirmed"]}
+            telemetry = dict(decision.telemetry)
+            telemetry.setdefault("bypassed", decision.telemetry.get("bypassed", False))
+            telemetry.setdefault("confirmed", decision.is_confirmed)
+            telemetry.setdefault("norm", session.best_norm)
+            telemetry.setdefault("best_norm", session.best_norm)
+            telemetry.setdefault("history", list(self.consensus.get_history(track_id)))
+            telemetry.setdefault("attempts", session.attempts)
+            telemetry.setdefault("valid_face_crops", session.valid_face_crops)
+            if candidate is not None:
+                telemetry.setdefault("current_match", candidate.name)
+                telemetry.setdefault("dist1", candidate.dist1)
+                telemetry.setdefault("dist2", candidate.dist2)
 
-            embedding = np.array(embedding, dtype=np.float32).flatten()
-            matched_name, d1, d2, current_norm = self.verify_face(embedding, face_center_ratio)
-            track["valid_face_crops"] += 1
-            track["attempts"] += 1
-
-            if matched_name not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person"]:
-                existing_claimant = self.active_identity_claims.get(matched_name)
-                if existing_claimant is not None and existing_claimant != track_id:
-                    # Check if the existing claimant is genuinely alive and recently seen
-                    claimant_seen = self.track_last_seen.get(existing_claimant, 0)
-                    is_claimant_live = (active_track_ids is None or existing_claimant in active_track_ids) and (self.frame_count - claimant_seen <= 15)
-                    if is_claimant_live:
-                        matched_name = "Ambiguous Match"
-                    else:
-                        # Existing claimant was lost or dead; seamlessly transfer claim to active track
-                        self.active_identity_claims[matched_name] = track_id
-                else:
-                    self.active_identity_claims[matched_name] = track_id
-
-            if current_norm >= track["best_norm"] * 0.85 and matched_name not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person"]:
-                track["history"].append(matched_name)
-                if len(track["history"]) > self.history_window:
-                    track["history"].pop(0)
-                if current_norm > track["best_norm"]:
-                    track["best_norm"] = current_norm
-
-            history = track["history"]
-            if len(history) >= self.consensus_votes:
-                valid_votes = [n for n in history if n not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person"]]
-                if valid_votes:
-                    most_common = max(set(valid_votes), key=valid_votes.count)
-                    vote_count = valid_votes.count(most_common)
-                    if vote_count >= self.consensus_votes:
-                        existing_claimant = self.active_identity_claims.get(most_common)
-                        claimant_seen = self.track_last_seen.get(existing_claimant, 0) if existing_claimant is not None else 0
-                        is_claimant_live = (existing_claimant is not None and existing_claimant != track_id and 
-                                            (active_track_ids is None or existing_claimant in active_track_ids) and 
-                                            (self.frame_count - claimant_seen <= 15))
-                        if not is_claimant_live:
-                            track["name"] = most_common
-                            track["is_confirmed"] = True
-                            self.active_identity_claims[most_common] = track_id
-                            if track_id in self._sessions:
-                                self._sessions[track_id].confirm_identity(most_common, d1, current_norm)
-                        else:
-                            track["name"] = "Ambiguous Match"
-
-            # Require at least 3 valid face crops before categorizing as "Unknown Person"
-            if not track["is_confirmed"] and track["valid_face_crops"] >= 3:
-                track["name"] = "Unknown Person"
-                track["is_confirmed"] = True
-                if track_id in self._sessions:
-                    self._sessions[track_id].mark_unknown()
-
-            if track_id in self._sessions:
-                session = self._sessions[track_id]
-                session.attempts = track["attempts"]
-                session.valid_face_crops = track["valid_face_crops"]
-                session.failed_attempts = track["failed_attempts"]
-                session.history = list(track["history"])
-                session.best_norm = track["best_norm"]
-
-            current_display = track["name"] if track["is_confirmed"] else matched_name
-            if current_display in ["Unknown", "Unknown Person", "Ambiguous Match"] and len(track["history"]) > 0:
-                current_display = track["history"][-1]
-            elif current_display in ["Unknown", "Ambiguous Match"]:
-                if track["valid_face_crops"] >= 3 or track["is_confirmed"]:
-                    current_display = "Unknown Person"
-                else:
-                    current_display = f"Scanning Track {track_id}"
-
-            telemetry = {
-                "bypassed": False,
-                "current_match": matched_name,
-                "dist1": d1,
-                "dist2": d2,
-                "norm": current_norm,
-                "best_norm": track["best_norm"],
-                "history": list(track["history"]),
-                "confirmed": track["is_confirmed"],
-                "attempts": track["attempts"],
-                "valid_face_crops": track["valid_face_crops"]
-            }
-
-            return current_display, telemetry
+            return decision.display_name, telemetry
 
     def purge_track(self, track_id: int) -> None:
-        """Purges track state across all internal tables and sessions."""
+        """Purges track state across all internal tables, sessions, and deep modules."""
         with self.lock:
             self._sessions.pop(track_id, None)
             self.active_tracks.pop(track_id, None)
             self.track_last_seen.pop(track_id, None)
             self.track_first_seen.pop(track_id, None)
-            self.track_last_submitted_frame.pop(track_id, None)
             self.track_keypoints.pop(track_id, None)
-            self.limb_cooldowns.pop(track_id, None)
-            self.recent_track_history.pop(track_id, None)
-            self.contended_tracks.pop(track_id, None)
-            self.head_presence_cache.pop(track_id, None)
-            if track_id in self.track_cache:
-                del self.track_cache[track_id]
-            claims_to_remove = [name for name, claimant in self.active_identity_claims.items() if claimant == track_id]
-            for name in claims_to_remove:
-                del self.active_identity_claims[name]
-            self.jitter_engine.reset_track(track_id)
-            self.temporal_subsampler.reset_track(track_id)
+            self.track_cache.pop(track_id, None)
+            self.consensus.purge_track(track_id)
+            self.pre_filter.purge_track(track_id)
+            self.biometric_scheduler.purge_track(track_id)
+            if self.jitter_engine is not None and hasattr(self.jitter_engine, "reset_track"):
+                self.jitter_engine.reset_track(track_id)
+            if self.temporal_subsampler is not None and hasattr(self.temporal_subsampler, "reset_track"):
+                self.temporal_subsampler.reset_track(track_id)
 
     # -----------------------------------------------------------------
     # Embedder Worker & Callback
@@ -1204,22 +1013,30 @@ class BiometricTrackingEngine:
         crops_to_sanitize = []
         embeddings: List[Optional[np.ndarray]] = []
         ratios: List[Optional[Tuple[float, float, float, float]]] = []
+        is_sides: List[bool] = []
 
         for item in batch_to_process:
             crop = item["crop"]
             crops_to_sanitize.append(crop)
+            is_side = False
+            if hasattr(self.embedder, "is_side_profile"):
+                try:
+                    is_side = self.embedder.is_side_profile(crop)
+                except Exception:
+                    is_side = False
             emb = self.embedder.embed(crop, align=True, strict_alignment=True, upscale=True)
             embeddings.append(emb)
+            is_sides.append(is_side)
             ratios.append((0.1, 0.1, 0.8, 0.8) if emb is not None else None)
 
         for i, item in enumerate(batch_to_process):
-            self._handle_embedding_result(item["track_id"], embeddings[i], ratios[i])
+            self._handle_embedding_result(item["track_id"], embeddings[i], ratios[i], is_side_profile=is_sides[i])
 
         GDPRMemorySanitizer.sanitize_crop_list(crops_to_sanitize)
         if hasattr(self.audit_logger, "flush"):
             self.audit_logger.flush()
 
-    def _handle_embedding_result(self, track_id: int, emb: Optional[np.ndarray], ratio: Any):
+    def _handle_embedding_result(self, track_id: int, emb: Optional[np.ndarray], ratio: Any, is_side_profile: bool = False):
         with self.lock:
             # If the track is currently in crossover contention, drop in-flight embedding.
             # Prevents face extraction from confirming identity or turning green during occlusion.
@@ -1246,24 +1063,25 @@ class BiometricTrackingEngine:
 
             track_age = (self.frame_count - self.track_first_seen.get(track_id, self.frame_count)) + 1
             display_name, telemetry = self.process_track_frame(
-                track_id, emb, face_center_ratio=0.5, track_age=track_age, active_track_ids=list(self.active_tracks.keys())
+                track_id, emb, face_center_ratio=0.5, track_age=track_age, active_track_ids=list(self.active_tracks.keys()),
+                is_side_profile=is_side_profile
             )
 
             if track_id in self.track_cache:
                 self.track_cache[track_id]["failed_attempts"] = 0
 
-            if display_name in ["Unknown", "Ambiguous Match"]:
-                display_name = "Unknown Person"
-
             self.active_tracks[track_id] = display_name
             if track_id in self._sessions:
                 session = self._sessions[track_id]
                 session.failed_attempts = 0
-                if display_name == "Unknown Person":
-                    session.mark_unknown()
-                elif not display_name.startswith("Scanning") and not display_name.startswith("Unverified") and not display_name.startswith("Contended"):
-                    session.confirm_identity(display_name, telemetry.get("dist1", 0.5), telemetry.get("norm", 1.0))
+                if telemetry.get("confirmed", False):
+                    if display_name == "Unknown Person":
+                        session.mark_unknown()
+                    elif not display_name.startswith("Scanning") and not display_name.startswith("Unverified") and not display_name.startswith("Contended"):
+                        session.confirm_identity(display_name, telemetry.get("dist1", 0.5), telemetry.get("norm", 1.0))
                 else:
+                    if session.is_confirmed and session.status == TrackStatus.UNKNOWN and not display_name.startswith("Unknown"):
+                        session.status = TrackStatus.SCANNING
                     session.identity_name = display_name
 
             if telemetry.get("confirmed") and display_name not in ["Unknown", "Ambiguous Match", "Unknown Person"]:

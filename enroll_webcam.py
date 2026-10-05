@@ -11,149 +11,211 @@ import time
 import cv2
 import numpy as np
 
-FACES_DIR = "data/known_faces"
+PROJECT_ROOT = os.path.abspath(os.path.dirname(__file__))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
 
-# Load OpenCV 1ms DNN Face Detector for enrollment framing
-net_proto = os.path.expanduser("~/.deepface/weights/deploy.prototxt")
-net_model = os.path.expanduser("~/.deepface/weights/res10_300x300_ssd_iter_140000.caffemodel")
+from src.utils.face_align import YuNetFaceAligner
+from src.utils.rebuild_db import rebuild_biometric_database
 
-face_net = None
-if os.path.exists(net_proto) and os.path.exists(net_model):
-    try:
-        face_net = cv2.dnn.readNetFromCaffe(net_proto, net_model)
-    except Exception:
-        pass
+FACES_DIR = os.path.join(PROJECT_ROOT, "data", "known_faces")
 
-def detect_face_box(frame):
-    if face_net is None or frame is None or frame.size == 0:
-        return None
-    try:
-        h, w = frame.shape[:2]
-        blob = cv2.dnn.blobFromImage(cv2.resize(frame, (300, 300)), 1.0, (300, 300), (104.0, 177.0, 123.0))
-        face_net.setInput(blob)
-        detections = face_net.forward()
-        
-        best_conf = 0
-        best_box = None
-        for i in range(detections.shape[2]):
-            conf = detections[0, 0, i, 2]
-            if conf > 0.50:
-                if conf > best_conf:
-                    best_conf = conf
-                    box = detections[0, 0, i, 3:7] * np.array([w, h, w, h])
-                    best_box = box.astype("int")
-        return best_box
-    except Exception:
-        return None
+# =====================================================================
+# THE CANONICAL 7-POSE ENROLLMENT STANDARD
+# =====================================================================
+STANDARD_POSES = [
+    {
+        "label": "Frontal",
+        "title": "1/7: Direct Frontal",
+        "desc": "Look directly straight into the camera lens.",
+        "duration": 2.5
+    },
+    {
+        "label": "Working_Angle",
+        "title": "2/7: Working Angle",
+        "desc": "Face your monitor naturally as when working at desk.",
+        "duration": 2.5
+    },
+    {
+        "label": "Left_Angle",
+        "title": "3/7: Slight Left (~25 deg)",
+        "desc": "Turn head slightly left. Keep both eyes visible!",
+        "duration": 2.5
+    },
+    {
+        "label": "Side_Left_Angle",
+        "title": "4/7: Side Left (~50 deg)",
+        "desc": "Turn head further left. Keep right eye just visible!",
+        "duration": 2.5
+    },
+    {
+        "label": "Right_Angle",
+        "title": "5/7: Slight Right (~25 deg)",
+        "desc": "Turn head slightly right. Keep both eyes visible!",
+        "duration": 2.5
+    },
+    {
+        "label": "Side_Right_Angle",
+        "title": "6/7: Side Right (~50 deg)",
+        "desc": "Turn head further right. Keep left eye just visible!",
+        "duration": 2.5
+    },
+    {
+        "label": "Tilt_Up",
+        "title": "7/7: Slight Tilt Up (~15 deg)",
+        "desc": "Slightly raise your chin upwards towards ceiling.",
+        "duration": 2.5
+    }
+]
 
-def start_webcam_enrollment():
-    print("=" * 60)
-    print("      AUTOMATED 3-SECOND GUIDED WEBCAM AUTO-ENROLLMENT")
-    print("=" * 60)
-    
-    person_name = input("\nEnter Full Name of Person to Enroll (e.g. Jane Doe): ").strip()
+
+def start_webcam_enrollment(person_name_override: str = None):
+    print("=" * 65)
+    print("      STANDARD 7-POSE GUIDED WEBCAM ENROLLMENT PROTOCOL")
+    print("=" * 65)
+    print("  Poses Captured:")
+    for p in STANDARD_POSES:
+        print(f"   [•] {p['title']}: {p['desc']}")
+    print("=" * 65)
+
+    if person_name_override:
+        person_name = person_name_override.strip()
+    else:
+        try:
+            person_name = input("\nEnter Full Name of Person to Enroll (e.g. Ceaser): ").strip()
+        except EOFError:
+            person_name = "Ceaser"
+
     if not person_name:
         print("[Enrollment Error] Name cannot be empty.")
         return
 
     clean_dir_name = person_name.replace(" ", "_")
     target_dir = os.path.join(FACES_DIR, clean_dir_name)
-    if not os.path.exists(target_dir):
-        os.makedirs(target_dir)
+    os.makedirs(target_dir, exist_ok=True)
+
+    aligner = YuNetFaceAligner()
 
     cap = cv2.VideoCapture(0)
     if not cap.isOpened():
-        print("[Enrollment Error] Could not access webcam.")
+        print("[Enrollment Error] Could not access webcam at index 0.")
         return
 
     print(f"\n[Webcam Enrollment] Target directory: '{target_dir}'")
-    print("[Webcam Enrollment] Look at the camera. Guided enrollment starts in 3 seconds...")
-    
-    start_time = time.time()
-    captured_frames = []
+    print("[Webcam Enrollment] Window will open. Follow on-screen instructions.")
+    print("                    Press 'q' at any time to cancel.\n")
 
-    guide_steps = [
-        (0.0, 1.0, "STEP 1: Look Directly Frontal"),
-        (1.0, 2.0, "STEP 2: Turn Head Slightly Left & Right"),
-        (2.0, 3.0, "STEP 3: Tilt Head Slightly Up"),
-    ]
+    # Warmup camera
+    for _ in range(5):
+        cap.read()
 
-    while True:
-        ret, frame = cap.read()
-        if not ret or frame is None:
-            break
+    saved_poses = {}
+    current_pose_idx = 0
+    pose_start_time = time.time()
+    best_candidate_in_step = None
+    best_conf_in_step = 0.0
 
-        elapsed = time.time() - start_time
-        
-        # Draw guidance overlay
-        h, w, _ = frame.shape
-        overlay = frame.copy()
-        
-        if elapsed < 3.0:
-            current_step = "PREPARING... Look at Camera"
-            for s_start, s_end, s_text in guide_steps:
-                if s_start <= elapsed < s_end:
-                    current_step = s_text
-                    break
+    window_name = "Standard 7-Pose Guided Face Enrollment"
 
-            # Draw framing guide circle
-            cv2.ellipse(overlay, (w // 2, h // 2), (160, 210), 0, 0, 360, (0, 255, 0), 2)
-            cv2.putText(overlay, f"ENROLLING: {person_name.upper()}", (20, 40),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 0), 2, cv2.LINE_AA)
-            cv2.putText(overlay, current_step, (20, 80),
-                        cv2.FONT_HERSHEY_SIMPLEX, 0.7, (0, 255, 255), 2, cv2.LINE_AA)
-            
-            # Progress bar
-            progress = min(1.0, max(0.0, elapsed / 3.0))
-            bar_w = int((w - 80) * progress)
-            cv2.rectangle(overlay, (40, h - 40), (40 + bar_w, h - 20), (0, 255, 0), -1)
-            cv2.rectangle(overlay, (40, h - 40), (w - 40, h - 20), (255, 255, 255), 2)
+    try:
+        while current_pose_idx < len(STANDARD_POSES):
+            ret, frame = cap.read()
+            if not ret or frame is None:
+                break
 
-            box = detect_face_box(frame)
-            if box is not None:
-                bx1, by1, bx2, by2 = box
-                cv2.rectangle(overlay, (bx1, by1), (bx2, by2), (0, 255, 0), 2)
-                captured_frames.append(frame.copy())
-                
-            cv2.imshow("Automated 3-Second Guided Enrollment", overlay)
-            if cv2.waitKey(1) & 0xFF == ord('q'):
-                print("[Enrollment] Cancelled by user.")
-                cap.release()
-                cv2.destroyAllWindows()
-                return
-        else:
-            break
+            h, w = frame.shape[:2]
+            pose_info = STANDARD_POSES[current_pose_idx]
+            elapsed_in_pose = time.time() - pose_start_time
+            remaining_in_pose = max(0.0, pose_info["duration"] - elapsed_in_pose)
 
-    cap.release()
-    cv2.destroyAllWindows()
+            # Detect faces with YuNet
+            aligner.detector.setInputSize((w, h))
+            _, faces = aligner.detector.detect(frame)
 
-    if not captured_frames:
-        print("[Enrollment Error] No valid face frames captured during 3-second guide.")
-        return
+            best_face = None
+            if faces is not None and len(faces) > 0:
+                best_face = max(faces, key=lambda f: f[2] * f[3])
+                conf = float(best_face[-1])
+                # During the last 1.5 seconds of the pose, store the sharpest/highest confidence frame
+                if elapsed_in_pose >= 0.8 and conf > best_conf_in_step:
+                    best_conf_in_step = conf
+                    best_candidate_in_step = frame.copy()
 
-    print(f"\n[Webcam Enrollment] Captured {len(captured_frames)} raw frame(s). Processing best 5 poses...")
-    
-    # Pick 5 evenly spaced diverse poses
-    step_indices = np.linspace(0, len(captured_frames) - 1, num=min(5, len(captured_frames)), dtype=int)
-    
-    saved_count = 0
-    pose_labels = ["Frontal", "Left_Angle", "Right_Angle", "Tilt_Up", "Pose_5"]
-    
-    for idx, frame_idx in enumerate(step_indices):
-        img = captured_frames[frame_idx]
-        label = pose_labels[idx]
-        file_path = os.path.join(target_dir, f"{label}.jpg")
-        cv2.imwrite(file_path, img)
-        saved_count += 1
-        print(f"  [+] Saved aligned pose {saved_count}: '{file_path}'")
+            # Time to finalize current pose
+            if elapsed_in_pose >= pose_info["duration"]:
+                label = pose_info["label"]
+                save_frame = best_candidate_in_step if best_candidate_in_step is not None else frame
+                file_path = os.path.join(target_dir, f"{label}.jpg")
+                cv2.imwrite(file_path, save_frame)
+                saved_poses[label] = file_path
+                print(f"  [✓] Saved {pose_info['title']} -> '{file_path}' (conf: {best_conf_in_step:.2f})")
 
-    print(f"\n[Webcam Enrollment] Successfully saved {saved_count} pose images for '{person_name}'.")
-    print("[Webcam Enrollment] Rebuilding FAISS IndexHNSWFlat vector database...")
-    
-    # Auto-execute enroll.py pipeline
-    import enroll
-    enroll.run_enrollment()
-    print("\n[Webcam Enrollment] AUTO-ENROLLMENT COMPLETE! Person is ready for live CCTV identification.")
+                # Advance to next pose
+                current_pose_idx += 1
+                pose_start_time = time.time()
+                best_candidate_in_step = None
+                best_conf_in_step = 0.0
+                continue
+
+            # Render HUD overlay
+            overlay = frame.copy()
+
+            # Header Banner
+            cv2.rectangle(overlay, (0, 0), (w, 90), (20, 20, 20), -1)
+            cv2.putText(overlay, f"ENROLLING: {person_name.upper()}  [{current_pose_idx + 1}/7]", (20, 32),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.75, (0, 255, 255), 2, cv2.LINE_AA)
+            cv2.putText(overlay, pose_info["title"], (20, 60),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.85, (0, 255, 0), 2, cv2.LINE_AA)
+            cv2.putText(overlay, pose_info["desc"], (20, 82),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.55, (200, 200, 200), 1, cv2.LINE_AA)
+
+            # Draw detected face box & landmarks
+            if best_face is not None:
+                bx, by, bw, bh = [int(v) for v in best_face[:4]]
+                cv2.rectangle(overlay, (bx, by), (bx + bw, by + bh), (0, 255, 0), 2)
+                landmarks = best_face[4:14].reshape((5, 2))
+                for pt in landmarks:
+                    cv2.circle(overlay, (int(pt[0]), int(pt[1])), 4, (0, 0, 255), -1)
+
+            # Progress Bar for Current Pose
+            progress = min(1.0, max(0.0, elapsed_in_pose / pose_info["duration"]))
+            bar_w = int((w - 60) * progress)
+            cv2.rectangle(overlay, (30, h - 35), (w - 30, h - 15), (60, 60, 60), 2)
+            cv2.rectangle(overlay, (30, h - 35), (30 + bar_w, h - 15), (0, 255, 0), -1)
+            cv2.putText(overlay, f"HOLD POSE: {remaining_in_pose:.1f}s", (35, h - 45),
+                        cv2.FONT_HERSHEY_SIMPLEX, 0.60, (0, 255, 0), 2, cv2.LINE_AA)
+
+            try:
+                cv2.imshow(window_name, overlay)
+                key = cv2.waitKey(1) & 0xFF
+                if key == ord('q'):
+                    print("[Enrollment] Cancelled by user.")
+                    cap.release()
+                    cv2.destroyAllWindows()
+                    return
+            except Exception:
+                # Headless environment fallback: display progress in stdout
+                if int(elapsed_in_pose * 2) % 2 == 0:
+                    print(f"Holding {pose_info['title']}... {remaining_in_pose:.1f}s remaining", end="\r")
+
+    finally:
+        cap.release()
+        try:
+            cv2.destroyAllWindows()
+        except Exception:
+            pass
+
+    print("\n" + "=" * 65)
+    print(f"[SUCCESS] All 7 Standard Poses Saved for '{person_name}'!")
+    for label, path in saved_poses.items():
+        print(f"  [+] {label}: {path}")
+    print("=" * 65)
+
+    print("\n[Auto-Sync] Rebuilding FAISS vector database & SQLite tables...")
+    rebuild_biometric_database()
+    print("\n[SUCCESS] ENROLLMENT COMPLETE! Live CCTV engine is now hot-reloaded and active.")
+
 
 if __name__ == "__main__":
-    start_webcam_enrollment()
+    name_arg = sys.argv[1] if len(sys.argv) > 1 else None
+    start_webcam_enrollment(name_arg)

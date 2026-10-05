@@ -50,6 +50,11 @@ def rebuild_biometric_database():
             img = cv2.imread(img_path)
             if img is None or img.size == 0:
                 continue
+
+            h, w = img.shape[:2]
+            if max(h, w) > 1280:
+                scale = 1080.0 / max(h, w)
+                img = cv2.resize(img, (int(w * scale), int(h * scale)), interpolation=cv2.INTER_AREA)
                 
             # Unified alignment and ArcFace extraction
             v = embedder.embed(img, align=True, strict_alignment=False, upscale=False)
@@ -57,22 +62,25 @@ def rebuild_biometric_database():
                 vector_idx = len(vectors)
                 vectors.append(v)
                 subject_vectors.append(v)
-                    
-                    pose_tag = img_name.split("_")[-2] if "_" in img_name else "Frontal"
-                    metadata_dict[str(vector_idx)] = {
-                        "name": display_name,
-                        "file": img_name,
-                        "pose": pose_tag,
-                        "occupation": "SECURITY SPECIALIST",
-                        "clearance": "LEVEL 1 GRANTED"
-                    }
-                    print(f"  + Added template #{vector_idx}: {img_name} ({pose_tag})")
-                    
+                stem = os.path.splitext(img_name)[0]
+                pose_tag = stem if stem in ["Frontal", "Left_Angle", "Right_Angle", "Side_Left_Angle", "Side_Right_Angle", "Tilt_Up", "Working_Angle"] else (img_name.split("_")[-2] if "_" in img_name else "Frontal")
+                metadata_dict[str(vector_idx)] = {
+                    "name": display_name,
+                    "file": img_name,
+                    "pose": pose_tag,
+                    "occupation": "SECURITY SPECIALIST",
+                    "clearance": "LEVEL 1 GRANTED"
+                }
+                print(f"  + Added template #{vector_idx}: {img_name} ({pose_tag})")
+
         if subject_vectors:
             # Mean vector for SQLite single-record sync
             mean_v = np.mean(subject_vectors, axis=0)
             mean_v = mean_v / (np.linalg.norm(mean_v) + 1e-10)
-            db_people_records[display_name] = mean_v.tolist()
+            db_people_records[display_name] = {
+                "mean": mean_v.tolist(),
+                "vectors": subject_vectors
+            }
 
     if not vectors:
         print("\n[ERROR] No valid facial embedding vectors extracted.")
@@ -89,7 +97,7 @@ def rebuild_biometric_database():
         json.dump(metadata_dict, f, indent=4)
     print(f"[SUCCESS] Wrote metadata registry to '{METADATA_PATH}'.")
 
-    # Sync SQLite faces.db people table
+    # Sync SQLite faces.db people and person_vectors tables
     try:
         conn = sqlite3.connect(DB_PATH)
         cursor = conn.cursor()
@@ -98,19 +106,46 @@ def rebuild_biometric_database():
             CREATE TABLE IF NOT EXISTS people (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
                 name TEXT NOT NULL UNIQUE,
-                embedding TEXT NOT NULL
+                embedding TEXT NOT NULL,
+                occupation TEXT DEFAULT 'SECURITY SPECIALIST',
+                clearance TEXT DEFAULT 'LEVEL 1 GRANTED',
+                phone TEXT DEFAULT 'N/A',
+                dob TEXT DEFAULT 'N/A',
+                address TEXT DEFAULT 'SYSTEM DATABASE',
+                threat_level TEXT DEFAULT 'LOW',
+                created_at TEXT DEFAULT '2026-10-05 00:00:00',
+                updated_at TEXT DEFAULT '2026-10-05 00:00:00'
+            )
+        """)
+        cursor.execute("""
+            CREATE TABLE IF NOT EXISTS person_vectors (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                person_id INTEGER NOT NULL,
+                vector_idx INTEGER NOT NULL,
+                embedding TEXT NOT NULL,
+                pose TEXT DEFAULT 'frontal',
+                image_path TEXT,
+                created_at TEXT DEFAULT '2026-10-05 00:00:00',
+                FOREIGN KEY (person_id) REFERENCES people(id) ON DELETE CASCADE
             )
         """)
         # Clear out old outdated records
+        cursor.execute("DELETE FROM person_vectors;")
         cursor.execute("DELETE FROM people;")
-        for name, emb_list in db_people_records.items():
+        for name, data in db_people_records.items():
             cursor.execute(
                 "INSERT INTO people (name, embedding) VALUES (?, ?)",
-                (name, json.dumps(emb_list))
+                (name, json.dumps(data["mean"]))
             )
+            person_id = cursor.lastrowid
+            for v_idx, v_arr in enumerate(data["vectors"]):
+                cursor.execute(
+                    "INSERT INTO person_vectors (person_id, vector_idx, embedding, pose) VALUES (?, ?, ?, ?)",
+                    (person_id, v_idx, json.dumps(v_arr.tolist() if hasattr(v_arr, "tolist") else list(v_arr)), f"pose_{v_idx}")
+                )
         conn.commit()
         conn.close()
-        print(f"[SUCCESS] Synced {len(db_people_records)} identity records to SQLite database '{DB_PATH}'.")
+        print(f"[SUCCESS] Synced {len(db_people_records)} identity records and {len(vectors)} template vectors to SQLite database '{DB_PATH}'.")
     except Exception as e:
         print(f"[WARNING] SQLite sync error: {e}")
 
@@ -127,4 +162,4 @@ def rebuild_biometric_database():
     print("=" * 65)
 
 if __name__ == "__main__":
-    rebuild_biometric_database(rename_ceo_to_ceaser=True)
+    rebuild_biometric_database()

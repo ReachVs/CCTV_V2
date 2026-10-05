@@ -159,6 +159,36 @@ class YuNetFaceAligner:
 
         return cv2.resize(crop, output_size, interpolation=cv2.INTER_LINEAR)
 
+    def is_side_profile(self, crop: np.ndarray) -> bool:
+        """
+        Detects if face crop is at a steep side-profile yaw angle using YuNet 5-point landmark geometry.
+        Returns True if landmark horizontal asymmetry or eye-distance compression exceeds profile threshold.
+        """
+        if crop is None or crop.size == 0 or self.detector is None:
+            return False
+        h, w = crop.shape[:2]
+        if h < 25 or w < 25:
+            return False
+        try:
+            with self.lock:
+                self.detector.setInputSize((w, h))
+                _, faces = self.detector.detect(crop)
+            if faces is None or len(faces) == 0:
+                return False
+            best_face = max(faces, key=lambda f: f[2] * f[3])
+            fw = float(best_face[2])
+            landmarks = best_face[4:14].reshape((5, 2))
+            x_re, x_le, x_nose = float(landmarks[0][0]), float(landmarks[1][0]), float(landmarks[2][0])
+            d_re = abs(x_nose - x_re)
+            d_le = abs(x_nose - x_le)
+            denom = max(1e-3, min(d_re, d_le))
+            yaw_asymmetry = max(d_re, d_le) / denom
+            eye_dist = abs(x_re - x_le)
+            eye_ratio = eye_dist / max(1.0, fw)
+            return bool(yaw_asymmetry > 3.0 or eye_ratio < 0.10)
+        except Exception:
+            return False
+
 
 def apply_clahe_contrast_lifting(crop_bgr, clip_limit=3.0, tile_grid_size=(8, 8)):
     """Applies CLAHE to the L-channel of LAB color space to lift dark shadow details."""

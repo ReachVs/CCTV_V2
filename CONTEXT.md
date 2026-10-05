@@ -17,7 +17,7 @@ The immutable output contract returned by `BiometricTrackingEngine.process_frame
 The optimization policy where biometric face alignment and vector extraction are completely bypassed for a `TrackedSubject` once consensus verification is confirmed, reducing per-frame compute to motion tracking only.
 
 ### IdentityConsensus
-A multi-frame voting protocol (requiring $N=2$ matching votes and a top-1 vs top-2 inter-subject margin $\ge 0.15$) to transition a `TrackedSubject` from scanning to confirmed identity.
+The dedicated biometric consensus and collision arbitration seam (`IdentityConsensus`, `MatchCandidate`, `ConsensusDecision` in `src.inference.consensus`). Encapsulates multi-frame voting ($N=2$ matching votes within a 5-frame window), top-1 vs top-2 inter-subject margin gating ($\ge 0.15$), side-profile yaw consensus guardrails (requiring frontal or quarter-view corroboration before identity lock-in), active identity claim leases to prevent ID-swapping across concurrent tracks, and automatic transition to confirmed `Unknown Person` status after attempt exhaustion. Fully decouples identity verification from video ingestion and frame rendering.
 
 ### VectorIndexAdapter
 The interface abstraction for vector similarity search. In production, this uses FAISS $L_2$ / HNSW vector indexes; in hermetic unit testing, an in-memory numpy test adapter is injected to prevent `sys.modules` monkeypatching.
@@ -50,3 +50,19 @@ The unified security audit logging seam (`AuditLogger`, `EncryptedWALAuditLogger
 
 ### CompositionRoot
 The canonical, thread-safe lazy factory and dependency orchestrator (`get_engine()`, `set_engine()`, `reset_engine()`) in `src.inference.live_cctv`. Implements PEP 562 module `__getattr__` and `ModuleType` wrapper to eliminate 4-second eager import penalties and heavy GPU/CPU neural network loading on CLI startup, while preserving 100% backward-compatibility for legacy callers and facilitating hermetic dependency injection in test suites.
+
+### HUDAnnotator
+The visual presentation and tactical HUD overlay seam (`Annotator`, `CyberpunkHUDAnnotator`, `NoOpAnnotator`, `ScriptedAnnotator`). Decouples graphical rendering, corner brackets, status palettes, and top telemetry bars from core mathematical inference, enabling zero-copy, zero-overhead execution in headless servers, CLI benchmarks, and unit tests.
+
+### StandardEnrollmentProtocol
+The authoritative 7-pose template registration standard (`enroll_webcam.py`):
+1. `Frontal` (0°): Direct gaze into camera lens. Serves as anchor for frontal consensus verification.
+2. `Working_Angle`: Natural working posture oriented towards primary computer display.
+3. `Left_Angle` (~25°): Gentle yaw turn to the subject's left with both eyes fully visible.
+4. `Side_Left_Angle` (~50°): Extended profile yaw turn to the subject's left with far right eye remaining strictly in the camera field of view.
+5. `Right_Angle` (~25°): Gentle yaw turn to the subject's right with both eyes fully visible.
+6. `Side_Right_Angle` (~50°): Extended profile yaw turn to the subject's right with far left eye remaining strictly in the camera field of view.
+7. `Tilt_Up` (~15°): Slight pitch upward elevation.
+
+Enforces real-time YuNet 5-point landmark verification and automatically triggers FAISS vector index rebuilding and SQLite profile synchronization upon completion.
+

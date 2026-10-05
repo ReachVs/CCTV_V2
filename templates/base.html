@@ -1,0 +1,230 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>{% block title %}SLEEPER AGENT // Defense-Grade CCTV Biometric Platform{% endblock %}</title>
+    <!-- Modern Design System -->
+    <link rel="stylesheet" href="/static/css/design_system.css">
+    {% block head %}{% endblock %}
+</head>
+<body>
+
+    <!-- Executive Command Header HUD -->
+    <header class="app-header">
+        <div class="brand-wrapper">
+            <div class="brand-seal">
+                <img src="/logo.png" alt="Sleeper Agent Emblem" onerror="this.style.display='none'">
+            </div>
+            <div class="brand-text">
+                <h1>SLEEPER <span>AGENT</span></h1>
+                <div class="brand-tag">TACTICAL BIOMETRIC INTELLIGENCE // V2.4</div>
+            </div>
+        </div>
+
+        <!-- Navigation Segmented Controller -->
+        <nav class="nav-controller">
+            <a href="/" class="nav-link-btn {% if active_page == 'dashboard' or not active_page %}active{% endif %}">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="2" width="20" height="8" rx="2" ry="2"/><rect x="2" y="14" width="20" height="8" rx="2" ry="2"/><line x1="6" y1="6" x2="6.01" y2="6"/><line x1="6" y1="18" x2="6.01" y2="18"/></svg>
+                SURVEILLANCE FEED
+            </a>
+            <button type="button" class="nav-link-btn action-accent" data-action="open-enroll-drawer" id="btn-header-enroll">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                + ENROLL PERSON
+            </button>
+            <a href="/enroll" class="nav-link-btn {% if active_page == 'enroll' %}active{% endif %}" title="Open Full-Screen Enrollment Studio">
+                <svg width="15" height="15" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="3" y="3" width="18" height="18" rx="2"/><circle cx="8.5" cy="8.5" r="1.5"/><polyline points="21 15 16 10 5 21"/></svg>
+                STUDIO
+            </a>
+        </nav>
+
+        <!-- Executive Metrics & Hardware Clocks -->
+        <div class="header-metrics">
+            <div class="metric-pill" id="connection-pill">
+                <span class="status-badge scanning">● CONNECTING</span>
+            </div>
+            <div class="metric-pill">
+                <div class="val" id="stat-fps">0.0</div>
+                <div class="lbl">STREAM FPS</div>
+            </div>
+            <div class="metric-pill">
+                <div class="val" id="stat-profiles">0</div>
+                <div class="lbl">FAISS PROFILES</div>
+            </div>
+            <div class="metric-pill">
+                <div class="val" id="stat-tracks">0</div>
+                <div class="lbl">ACTIVE TRACKS</div>
+            </div>
+            <div class="system-clock">
+                <div class="time" id="clock-time">00:00:00 ICT</div>
+                <div class="date" id="clock-date">2026-10-06</div>
+            </div>
+        </div>
+    </header>
+
+    <!-- Main Workspace Content -->
+    <main class="app-main-content">
+        {% block content %}{% endblock %}
+    </main>
+
+    <!-- ======================================================================
+         SLIDE-OVER BIOMETRIC ENROLLMENT DRAWER (IN-DASHBOARD NO-NAVIGATE)
+         ====================================================================== -->
+    <div class="drawer-backdrop" id="drawer-backdrop"></div>
+    <aside class="slide-over-drawer" id="enrollment-drawer" aria-label="Biometric Enrollment Drawer">
+        <div class="drawer-header">
+            <h2>
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-accent)" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
+                BIOMETRIC SUBJECT ENROLLMENT
+            </h2>
+            <button type="button" class="drawer-close-btn" data-action="close-enroll-drawer" aria-label="Close Drawer">
+                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>
+            </button>
+        </div>
+
+        <div class="drawer-content">
+            <div id="drawer-toast" style="display: none;"></div>
+
+            <!-- Drag & Drop Zone -->
+            <div class="upload-dropzone" id="drawer-dropzone">
+                <svg class="upload-dropzone-icon" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.8"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="17 8 12 3 7 8"/><line x1="12" y1="3" x2="12" y2="15"/></svg>
+                <div class="dropzone-title">Drag & Drop Photos Anywhere Here</div>
+                <div class="dropzone-subtitle">Drop multiple JPG, PNG, or WEBP photos • Automatic face alignment & focus verification</div>
+                <input type="file" id="drawer-file-input" accept="image/*" multiple style="display: none;">
+            </div>
+
+            <!-- Detection Status Bar -->
+            <div id="drawer-status-indicator" style="display: none; padding: 10px 14px; border-radius: 6px; background: rgba(6,182,212,0.1); border: 1px solid rgba(6,182,212,0.25); font-family: var(--font-mono); font-size: 0.72rem; color: var(--cyan-accent); text-align: center;">
+                Scanning images with YuNet Landmark Engine & calculating focus sharpness...
+            </div>
+
+            <!-- Multi-Exemplar Curation Tray -->
+            <div class="curation-tray" id="drawer-curation-tray" style="display: none;">
+                <div class="curation-title-bar">
+                    <span>ALIGNED FACE CROPS (CLICK TO TOGGLE)</span>
+                    <button type="button" id="drawer-clear-btn" class="tool-btn" style="padding: 2px 8px; font-size: 0.68rem;">CLEAR</button>
+                </div>
+                <div class="curation-grid" id="drawer-curation-grid"></div>
+            </div>
+
+            <!-- Subject Identity Form Fields -->
+            <div style="display: flex; flex-direction: column; gap: 14px; border-top: 1px solid var(--border-hairline); padding-top: 16px;">
+                <div class="input-group">
+                    <label class="input-label" for="drawer-full-name">
+                        Full Subject Name <span style="color: var(--rose-threat);">*</span>
+                    </label>
+                    <input type="text" id="drawer-full-name" class="form-input" placeholder="e.g. Alex Morgan" required>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="input-group">
+                        <label class="input-label" for="drawer-occupation">Role / Title</label>
+                        <input type="text" id="drawer-occupation" class="form-input" placeholder="e.g. Lead Analyst">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="drawer-clearance">Clearance</label>
+                        <select id="drawer-clearance" class="form-select">
+                            <option value="LEVEL 1 GRANTED">LEVEL 1 (Standard)</option>
+                            <option value="LEVEL 2 GRANTED">LEVEL 2 (Restricted)</option>
+                            <option value="LEVEL 3 GRANTED">LEVEL 3 (Top Secret)</option>
+                            <option value="EXECUTIVE LEVEL">EXECUTIVE LEVEL</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 12px;">
+                    <div class="input-group">
+                        <label class="input-label" for="drawer-phone">Phone</label>
+                        <input type="tel" id="drawer-phone" class="form-input" placeholder="+1 555 0199">
+                    </div>
+                    <div class="input-group">
+                        <label class="input-label" for="drawer-threat">Threat Profile</label>
+                        <select id="drawer-threat" class="form-select">
+                            <option value="LOW">LOW (Authorized Personnel)</option>
+                            <option value="ELEVATED">ELEVATED (Escort Required)</option>
+                            <option value="HIGH">HIGH (Restricted Access)</option>
+                        </select>
+                    </div>
+                </div>
+
+                <div class="input-group">
+                    <label class="input-label" for="drawer-address">Facility Location</label>
+                    <input type="text" id="drawer-address" class="form-input" placeholder="e.g. Sector 4 East Wing">
+                </div>
+            </div>
+        </div>
+
+        <div class="drawer-footer">
+            <button type="button" class="btn-secondary-action" data-action="close-enroll-drawer">Cancel</button>
+            <button type="button" class="btn-primary-action" id="drawer-commit-btn" disabled>
+                <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                Commit Enrollment
+            </button>
+        </div>
+    </aside>
+
+    <!-- ======================================================================
+         CLASSIFIED BIOMETRIC INTELLIGENCE DOSSIER MODAL
+         ====================================================================== -->
+    <div class="dossier-modal-backdrop" id="dossier-modal" aria-hidden="true" role="dialog">
+        <div class="dossier-modal-card">
+            <div class="dossier-modal-header">
+                <div class="dossier-header-title">CLASSIFIED BIOMETRIC INTELLIGENCE DOSSIER</div>
+                <button type="button" class="dossier-close-btn" id="dossier-close-btn" aria-label="Close Dossier">&times;</button>
+            </div>
+            <div class="dossier-modal-body">
+                <div class="dossier-gallery-col">
+                    <div class="dossier-section-title">ENROLLED BIOMETRIC PROFILES</div>
+                    <div class="dossier-image-reel" id="dossier-gallery">
+                        <!-- Dynamically filled with aligned face crops -->
+                    </div>
+                </div>
+                <div class="dossier-info-col">
+                    <div class="dossier-name-header" id="modal-fullname">SUBJECT DOSSIER</div>
+                    <div class="dossier-grid">
+                        <div class="dossier-item">
+                            <span class="d-lbl">ACCESS CLEARANCE</span>
+                            <span class="d-val access-granted" id="modal-access">LEVEL 1 GRANTED</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">SYSTEM STATUS</span>
+                            <span class="d-val" id="modal-status">ACTIVE CLEARANCE</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">ROLE / TITLE</span>
+                            <span class="d-val" id="modal-occupation">REGISTERED PERSONNEL</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">CONTACT PHONE</span>
+                            <span class="d-val" id="modal-phone">N/A</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">FACILITY LOCATION</span>
+                            <span class="d-val" id="modal-address">HEADQUARTERS</span>
+                        </div>
+                        <div class="dossier-item">
+                            <span class="d-lbl">DATE OF REGISTRATION</span>
+                            <span class="d-val" id="modal-dob">2026</span>
+                        </div>
+                    </div>
+                    <div class="dossier-intel-block">
+                        <div class="d-intel-title">SECURITY SURVEILLANCE DIRECTIVE</div>
+                        <div id="modal-intel-notes">Subject is cleared for automated facial matching. Biometric exemplar embeddings indexed in multi-vector FAISS index. Real-time consensus confirmed.</div>
+                    </div>
+                </div>
+            </div>
+        </div>
+    </div>
+
+    <!-- Global Client Logic -->
+    <script src="/static/js/cctv_client.js"></script>
+    <script src="/static/js/enrollment_drawer.js"></script>
+    <script>
+        document.addEventListener('DOMContentLoaded', () => {
+            window.appDrawer = new EnrollmentDrawer();
+            window.appDrawer.init();
+        });
+    </script>
+    {% block scripts %}{% endblock %}
+</body>
+</html>

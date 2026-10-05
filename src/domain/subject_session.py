@@ -48,6 +48,11 @@ class SubjectSession:
     def age(self) -> int:
         return max(1, (self.last_seen - self.first_seen) + 1)
 
+    def track_age(self, current_frame: Optional[int] = None) -> int:
+        """Returns the tracking age relative to first_seen and current_frame or last_seen."""
+        ref = self.last_seen if current_frame is None else current_frame
+        return max(1, (ref - self.first_seen) + 1)
+
     @property
     def display_name(self) -> str:
         """Dynamically computes the visual display label based on status and identity."""
@@ -125,6 +130,8 @@ class SubjectSession:
         """Exits contention and reverts to scanning state for re-verification."""
         if self.status == TrackStatus.CONTENDED:
             self.status = TrackStatus.SCANNING
+            self.identity_name = ""
+            self.confidence = 0.50
         self.contention_hysteresis = 0
 
     def update_position(self, box: Tuple[int, int, int, int], frame_num: int, conf: float) -> None:

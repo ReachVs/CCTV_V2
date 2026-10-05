@@ -25,6 +25,36 @@ class FaceEnrollmentResponse(BaseSchema):
     total_profiles: Optional[int] = Field(default=None)
 
 
+class FacePreviewRequest(BaseSchema):
+    images_base64: List[str] = Field(default_factory=list, description="Array of base64 encoded images to preview & curate")
+
+
+class FacePreviewItem(BaseSchema):
+    crop_id: str
+    image_b64: str
+    sharpness_score: float
+    confidence: float
+    is_recommended: bool
+    status_label: str = "Optimal Quality"
+
+
+class FacePreviewResponse(BaseSchema):
+    status: str = Field(default="success")
+    previews: List[FacePreviewItem] = Field(default_factory=list)
+    total_detected: int = 0
+
+
+class FaceCommitEnrollmentRequest(BaseSchema):
+    full_name: str = Field(..., min_length=1, description="Full name of subject to enroll")
+    phone_number: Optional[str] = Field(default="", description="Contact phone number")
+    occupation: Optional[str] = Field(default="", description="Occupation or role title")
+    dob: Optional[str] = Field(default="", description="Date of birth")
+    clearance: Optional[str] = Field(default="LEVEL 1", description="Access clearance level")
+    address: Optional[str] = Field(default="", description="Primary address")
+    threat_level: Optional[str] = Field(default="LOW", description="Assigned threat level assessment")
+    approved_crops_base64: List[str] = Field(default_factory=list, description="List of approved face crop base64 strings to index")
+
+
 class CameraFeedConfig(BaseSchema):
     stream_id: str = Field(..., example="cam_0")
     source: Any = Field(..., description="RTSP URL, video file path, or device index integer")

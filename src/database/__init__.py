@@ -13,6 +13,10 @@ from src.database.vector_store import (
     FAISSIndexAdapter,
     InMemoryIndexAdapter
 )
+from src.database.biometric_repository import (
+    BiometricRepository,
+    biometric_repo
+)
 
 __all__ = [
     "AuditLogger",
@@ -22,5 +26,7 @@ __all__ = [
     "AESEncryptedWALAuditLogger",
     "VectorIndexAdapter",
     "FAISSIndexAdapter",
-    "InMemoryIndexAdapter"
+    "InMemoryIndexAdapter",
+    "BiometricRepository",
+    "biometric_repo"
 ]

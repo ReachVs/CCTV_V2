@@ -48,7 +48,12 @@ class FAISSIndexAdapter(VectorIndexAdapter):
         q = np.ascontiguousarray(query_vector, dtype=np.float32)
         if q.ndim == 1:
             q = np.expand_dims(q, axis=0)
-        return self._index.search(q, k)
+        dists, idxs = self._index.search(q, k)
+        if faiss is not None and getattr(self._index, 'metric_type', None) == getattr(faiss, 'METRIC_INNER_PRODUCT', 0):
+            # Convert Inner Product (cosine similarity on unit vectors) to Squared Euclidean L2 distance:
+            # ||u - v||^2 = 2 - 2*(u.v) (matching IndexFlatL2 convention)
+            dists = np.maximum(0.0, 2.0 - 2.0 * dists).astype(np.float32)
+        return dists, idxs
 
     def add(self, vectors: np.ndarray) -> None:
         if self._index is not None:

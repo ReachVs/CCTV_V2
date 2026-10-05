@@ -1,3 +1,4 @@
+
 """
 Unit tests for the PersonDetector seam and adapters (Candidate 2).
 Verifies:

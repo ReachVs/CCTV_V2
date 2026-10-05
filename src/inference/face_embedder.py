@@ -44,6 +44,10 @@ class FaceEmbedder(ABC):
         """
         pass
 
+    def is_side_profile(self, img_or_crop: np.ndarray) -> bool:
+        """Determines if the face in crop is at a steep side-profile yaw angle."""
+        return False
+
     @property
     def keras_model(self) -> Any:
         return None
@@ -106,15 +110,13 @@ class ArcFaceEmbedder(FaceEmbedder):
         if img_or_crop is None or img_or_crop.size == 0:
             return None
 
-        # 1. Optional Super-Resolution Upscaling (for small stream crops)
+        # 1. Optional Super-Resolution Upscaling (for small stream crops < 112px)
         if upscale and self.upscaler is not None:
-            enhanced = self.upscaler.upscale(img_or_crop)
-            crop_h, crop_w = enhanced.shape[:2]
-            if crop_w > 320 or crop_h > 320:
-                scale = 320.0 / max(crop_w, crop_h)
-                new_w = max(1, int(crop_w * scale))
-                new_h = max(1, int(crop_h * scale))
-                enhanced = cv2.resize(enhanced, (new_w, new_h), interpolation=cv2.INTER_LINEAR)
+            crop_h, crop_w = img_or_crop.shape[:2]
+            if min(crop_h, crop_w) < 112:
+                enhanced = self.upscaler.upscale(img_or_crop)
+            else:
+                enhanced = img_or_crop
         else:
             enhanced = img_or_crop
 
@@ -177,6 +179,11 @@ class ArcFaceEmbedder(FaceEmbedder):
                 pass
 
         return None
+
+    def is_side_profile(self, img_or_crop: np.ndarray) -> bool:
+        if self.face_aligner is not None and hasattr(self.face_aligner, "is_side_profile"):
+            return self.face_aligner.is_side_profile(img_or_crop)
+        return False
 
 
 class ScriptedFaceEmbedder(FaceEmbedder):

@@ -15,6 +15,7 @@ except ImportError:
 import sys
 import time
 import base64
+import binascii
 import asyncio
 import json
 import sqlite3
@@ -48,6 +49,10 @@ from src.inference.multi_camera import CameraIngestionPool, MultiCameraIngestion
 from src.api.schemas import (
     FaceEnrollmentRequest,
     FaceEnrollmentResponse,
+    FacePreviewRequest,
+    FacePreviewItem,
+    FacePreviewResponse,
+    FaceCommitEnrollmentRequest,
     CameraFeedConfig,
     CameraStatusResponse,
     ActiveTrackSchema,
@@ -58,6 +63,7 @@ from src.api.schemas import (
     HealthResponse,
     ReadinessResponse
 )
+from src.services.biometric_enrollment_manager import BiometricEnrollmentManager
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -67,8 +73,40 @@ METADATA_PATH = os.path.join(DATA_DIR, "metadata.json")
 KNOWN_FACES_DIR = os.path.join(DATA_DIR, "known_faces")
 os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
 
+def get_safe_subject_dir(name: str) -> Optional[str]:
+    """
+    Safely resolves a directory path within KNOWN_FACES_DIR for a subject.
+    Guards against path traversal attacks (OWASP Top 10 A01 / CWE-22).
+    """
+    if not name or not isinstance(name, str):
+        return None
+    # Explicitly reject directory traversal attempts
+    if ".." in name or "/" in name or "\\" in name:
+        return None
+
+    clean = os.path.basename(name.strip())
+    if not clean or clean in (".", ".."):
+        return None
+
+    clean_subfolder = clean.replace(" ", "_")
+    cand_path = os.path.abspath(os.path.join(KNOWN_FACES_DIR, clean_subfolder))
+    real_root = os.path.abspath(KNOWN_FACES_DIR)
+    if cand_path.startswith(real_root) and cand_path != real_root:
+        return cand_path
+    return None
+
 from src.database.audit_repository import AuditRepository
+from src.database.biometric_repository import biometric_repo
 audit_repo = AuditRepository(DB_PATH)
+
+# Deep Subject Enrollment Manager
+enrollment_manager = BiometricEnrollmentManager(
+    known_faces_dir=KNOWN_FACES_DIR,
+    face_aligner=getattr(engine, "face_aligner", None),
+    embedder=getattr(engine, "embedder", None),
+    biometric_repo=biometric_repo,
+    engine=engine,
+)
 
 TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR if os.path.exists(TEMPLATES_DIR) else "templates")
@@ -148,6 +186,20 @@ if os.path.exists(EVENTS_DIR):
 
 if os.path.exists(KNOWN_FACES_DIR):
     app.mount("/data/known_faces", StaticFiles(directory=KNOWN_FACES_DIR), name="known_faces")
+
+STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
+if os.path.exists(STATIC_DIR):
+    app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
+
+
+@app.middleware("http")
+async def add_security_headers(request: Request, call_next):
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["X-Frame-Options"] = "SAMEORIGIN"
+    response.headers["X-XSS-Protection"] = "1; mode=block"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    return response
 
 
 # Container Orchestration Probes (Task 4)
@@ -291,165 +343,162 @@ async def get_current_camera_frame():
 @app.get("/", response_class=HTMLResponse)
 @app.get("/dashboard", response_class=HTMLResponse)
 async def dashboard_page(request: Request):
-    return templates.TemplateResponse("dashboard.html", {"request": request})
+    return templates.TemplateResponse("dashboard.html", {"request": request, "active_page": "dashboard"})
 
 
 @app.get("/enroll", response_class=HTMLResponse)
 async def enroll_page(request: Request):
-    return templates.TemplateResponse("enroll.html", {"request": request})
+    return templates.TemplateResponse("enroll.html", {"request": request, "active_page": "enroll"})
 
 
-def _process_enrollment_sync(req: FaceEnrollmentRequest) -> Dict[str, Any]:
-    try:
-        image_b64_list = req.images_base64 if req.images_base64 else ([req.image_base64] if req.image_base64 else [])
-        imgs = []
-        for b64 in image_b64_list:
-            if not b64:
-                continue
+@app.post("/api/enroll/preview", response_model=FacePreviewResponse)
+async def preview_enrollment_faces(req: FacePreviewRequest):
+    """
+    Zero-Friction Face Curation: Decodes uploaded images, aligns faces via YuNet,
+    evaluates focus sharpness, and returns verified thumbnail previews for user confirmation.
+    """
+    if len(req.images_base64) > 30:
+        raise HTTPException(status_code=400, detail="Maximum 30 images per preview batch exceeded.")
+
+    raw_bytes_list = []
+    for b64 in req.images_base64:
+        if not b64:
+            continue
+        try:
             if "," in b64:
                 b64 = b64.split(",")[1]
-            img_bytes = base64.b64decode(b64)
-            nparr = np.frombuffer(img_bytes, np.uint8)
-            img = cv2.imdecode(nparr, cv2.IMREAD_COLOR)
-            if img is not None and img.size > 0:
-                imgs.append(img)
+            decoded = base64.b64decode(b64)
+            if len(decoded) > 15 * 1024 * 1024:
+                continue
+            raw_bytes_list.append(decoded)
+        except Exception:
+            continue
 
-        if not imgs:
-            return {"status": "error", "message": "Invalid or missing face image payload."}
+    previews = await asyncio.to_thread(enrollment_manager.preview_and_curate, raw_bytes_list)
+    items = [
+        FacePreviewItem(
+            crop_id=p.crop_id,
+            image_b64=p.image_b64,
+            sharpness_score=p.sharpness_score,
+            confidence=p.confidence,
+            is_recommended=p.is_recommended,
+            status_label=p.status_label
+        ) for p in previews
+    ]
+    return FacePreviewResponse(
+        status="success",
+        previews=items,
+        total_detected=len(items)
+    )
 
-        clean_folder = req.full_name.replace(" ", "_")
-        faces_dir = os.path.join(DATA_DIR, "known_faces", clean_folder)
-        os.makedirs(faces_dir, exist_ok=True)
 
-        from deepface import DeepFace
-        from src.utils.face_align import YuNetFaceAligner
-        face_aligner = YuNetFaceAligner()
-        embeddings = []
+@app.post("/api/enroll/commit", response_model=FaceEnrollmentResponse)
+async def commit_enrollment_api(req: FaceCommitEnrollmentRequest):
+    """
+    Commits approved curated face crops into the subject database, generates multi-exemplar
+    512D ArcFace embeddings, updates SQLite records, and hot-reloads FAISS without filesystem wrangling.
+    """
+    clean_name = req.full_name.strip()
+    if not clean_name:
+        raise HTTPException(status_code=400, detail="Full Name is required.")
 
-        pose_names = ["Frontal", "Left_Angle", "Right_Angle", "Tilt_Up", "Pose_5"]
-        for idx, img in enumerate(imgs):
-            pose_tag = pose_names[idx] if idx < len(pose_names) else f"Pose_{idx+1}"
-            filename = f"{clean_folder}_{pose_tag}_{int(time.time())}.jpg"
-            save_path = os.path.join(faces_dir, filename)
-            cv2.imwrite(save_path, img)
+    if len(clean_name) > 100:
+        raise HTTPException(status_code=400, detail="Subject name cannot exceed 100 characters.")
 
-            try:
-                emb_v = engine.extract_face_embedding(img, align=True)
+    if not req.approved_crops_base64:
+        raise HTTPException(status_code=400, detail="At least one approved face image is required.")
 
-                if emb_v is None:
-                    aligned = face_aligner.align_face(img, output_size=(112, 112), strict=False)
-                    if aligned is not None and aligned.size > 0:
-                        reps = DeepFace.represent(
-                            img_path=aligned,
-                            model_name="ArcFace",
-                            detector_backend="skip",
-                            enforce_detection=False
-                        )
-                        if reps and len(reps) > 0:
-                            v = np.array(reps[0]["embedding"], dtype=np.float32)
-                            emb_v = v / (np.linalg.norm(v) + 1e-10)
+    if len(req.approved_crops_base64) > 30:
+        raise HTTPException(status_code=400, detail="Maximum 30 face templates per enrollment exceeded.")
 
-                if emb_v is not None:
-                    embeddings.append(emb_v)
-            except Exception as e:
-                print(f"[Enrollment Worker] Pose #{idx+1} warning: {e}")
+    profile_data = {
+        "occupation": req.occupation[:100] if req.occupation else "SECURITY SPECIALIST",
+        "clearance": req.clearance[:50] if req.clearance else "LEVEL 1 GRANTED",
+        "phone": req.phone_number[:50] if req.phone_number else "N/A",
+        "dob": req.dob[:30] if req.dob else "N/A",
+        "address": req.address[:150] if req.address else "SYSTEM DATABASE",
+        "threat_level": req.threat_level[:20] if req.threat_level else "LOW"
+    }
 
-        if not embeddings:
-            return {
-                "status": "error",
-                "message": "Biometric extraction failed: No face detected in photo."
-            }
-
-        final_vector = np.mean(embeddings, axis=0)
-        final_vector = final_vector / (np.linalg.norm(final_vector) + 1e-10)
-
-        index_path = os.path.join(DATA_DIR, "faces.index")
-        metadata_path = os.path.join(DATA_DIR, "metadata.json")
-
-        with engine.lock:
-            import faiss
-            if os.path.exists(index_path):
-                index = faiss.read_index(index_path)
-            else:
-                index = faiss.IndexFlatL2(512)
-
-            start_id = index.ntotal
-            index.add(np.array(embeddings, dtype=np.float32))
-            faiss.write_index(index, index_path)
-
-            meta_dict = {}
-            if os.path.exists(metadata_path):
-                try:
-                    with open(metadata_path, 'r') as f:
-                        meta_dict = json.load(f)
-                except Exception:
-                    meta_dict = {}
-
-            for idx, emb_v in enumerate(embeddings):
-                vec_id = start_id + idx
-                meta_dict[str(vec_id)] = {
-                    "name": req.full_name,
-                    "phone": req.phone_number,
-                    "occupation": req.occupation,
-                    "dob": req.dob,
-                    "clearance": req.clearance,
-                    "address": req.address,
-                    "threat_level": req.threat_level,
-                    "poses_count": len(embeddings)
-                }
-
-            with open(metadata_path, 'w') as f:
-                json.dump(meta_dict, f, indent=4)
-
-            try:
-                engine.reload_index()
-            except Exception as reload_err:
-                print(f"[Enrollment Worker] Hot reload warning: {reload_err}")
-
+    raw_crops = []
+    for b64 in req.approved_crops_base64:
+        if not b64:
+            continue
         try:
-            conn = sqlite3.connect(DB_PATH)
-            cursor = conn.cursor()
-            cursor.execute("PRAGMA journal_mode=WAL;")
-            cursor.execute("""
-                CREATE TABLE IF NOT EXISTS people (
-                    id INTEGER PRIMARY KEY AUTOINCREMENT,
-                    name TEXT NOT NULL UNIQUE,
-                    embedding TEXT NOT NULL
-                )
-            """)
-            cursor.execute(
-                "INSERT INTO people (name, embedding) VALUES (?, ?) ON CONFLICT(name) DO UPDATE SET embedding=excluded.embedding",
-                (req.full_name, json.dumps(final_vector.tolist()))
-            )
-            conn.commit()
-            conn.close()
-        except Exception as e:
-            print(f"[Enrollment Worker] SQLite sync warning: {e}")
+            if "," in b64:
+                b64 = b64.split(",")[1]
+            decoded = base64.b64decode(b64)
+            if len(decoded) > 15 * 1024 * 1024:
+                raise HTTPException(status_code=400, detail="Individual image payload exceeds 15MB limit.")
+            raw_crops.append(decoded)
+        except (binascii.Error, ValueError):
+            raise HTTPException(status_code=400, detail="Invalid base64 encoding in image payload.")
 
-        return {
-            "status": "success",
-            "message": f"Successfully enrolled '{req.full_name}' ({len(embeddings)} pose(s) processed)",
-            "profile_id": start_id,
-            "total_profiles": int(index.ntotal)
-        }
-    except Exception as e:
-        return {"status": "error", "message": f"Server processing error: {str(e)}"}
+    result = await asyncio.to_thread(
+        enrollment_manager.commit_enrollment,
+        clean_name,
+        profile_data,
+        raw_crops
+    )
+
+    if result.status == "success":
+        return FaceEnrollmentResponse(
+            status="success",
+            message=result.message,
+            profile_id=result.subject_id,
+            total_profiles=result.total_profiles
+        )
+    else:
+        raise HTTPException(status_code=400, detail=result.message)
+
 
 
 @app.post("/api/enroll", response_model=FaceEnrollmentResponse)
 async def enroll_subject_api(req: FaceEnrollmentRequest):
+    """
+    Backward-compatible enrollment endpoint delegating directly to BiometricEnrollmentManager.
+    """
     if not req.full_name.strip():
         raise HTTPException(status_code=400, detail="Full Name is required.")
 
-    result = await asyncio.to_thread(_process_enrollment_sync, req)
+    image_b64_list = req.images_base64 if req.images_base64 else ([req.image_base64] if req.image_base64 else [])
+    raw_crops = []
+    for b64 in image_b64_list:
+        if not b64:
+            continue
+        if "," in b64:
+            b64 = b64.split(",")[1]
+        raw_crops.append(base64.b64decode(b64))
 
-    if result.get("status") == "success":
-        return FaceEnrollmentResponse(**result)
+    profile_data = {
+        "occupation": req.occupation,
+        "clearance": req.clearance,
+        "phone": req.phone_number,
+        "dob": req.dob,
+        "address": req.address,
+        "threat_level": req.threat_level
+    }
+
+    result = await asyncio.to_thread(
+        enrollment_manager.commit_enrollment,
+        req.full_name,
+        profile_data,
+        raw_crops
+    )
+
+    if result.status == "success":
+        return FaceEnrollmentResponse(
+            status="success",
+            message=result.message,
+            profile_id=result.subject_id,
+            total_profiles=result.total_profiles
+        )
     else:
-        raise HTTPException(status_code=400, detail=result.get("message", "Enrollment failed"))
+        raise HTTPException(status_code=400, detail=result.message)
 
 
 @app.get("/api/events", response_model=TelemetryResponse)
+@app.get("/api/telemetry", response_model=TelemetryResponse)
 async def get_audit_events():
     try:
         events = []
@@ -502,12 +551,8 @@ async def get_audit_events():
 @app.get("/api/subject/avatar/{name}")
 async def get_subject_avatar(name: str):
     try:
-        clean_name = name.strip()
-        clean_dir = clean_name.replace(" ", "_")
-        subject_dir = os.path.join(DATA_DIR, "known_faces", clean_dir)
-        if not os.path.exists(subject_dir):
-            subject_dir = os.path.join(DATA_DIR, "known_faces", clean_name)
-        if os.path.exists(subject_dir):
+        subject_dir = get_safe_subject_dir(name)
+        if subject_dir and os.path.exists(subject_dir):
             img_files = [f for f in os.listdir(subject_dir) if f.lower().endswith(('.jpg', '.jpeg', '.png', '.webp'))]
             files = sorted(img_files, key=lambda f: os.path.getmtime(os.path.join(subject_dir, f)), reverse=True)
             no_cache_headers = {"Cache-Control": "no-cache, no-store, must-revalidate", "Pragma": "no-cache", "Expires": "0"}
@@ -527,14 +572,11 @@ async def get_subject_avatar(name: str):
 @app.get("/api/subject/{name}")
 async def get_subject_dossier(name: str):
     try:
-        clean_name = name.strip()
-        clean_dir_name = clean_name.replace(" ", "_")
-        subject_dir = os.path.join(DATA_DIR, "known_faces", clean_dir_name)
-        if not os.path.exists(subject_dir):
-            subject_dir = os.path.join(DATA_DIR, "known_faces", clean_name)
+        subject_dir = get_safe_subject_dir(name)
+        clean_name = os.path.basename(name.strip())
 
         images = []
-        if os.path.exists(subject_dir):
+        if subject_dir and os.path.exists(subject_dir):
             folder_basename = os.path.basename(subject_dir)
             for fname in sorted(os.listdir(subject_dir)):
                 if fname.lower().endswith(('.jpg', '.jpeg', '.png', '.webp')):
@@ -552,14 +594,20 @@ async def get_subject_dossier(name: str):
             "dob": "N/A"
         }
         
-        metadata_path = os.path.join(DATA_DIR, "metadata.json")
-        if os.path.exists(metadata_path):
-            with open(metadata_path) as f:
-                data = json.load(f)
-                for k, v in data.items():
-                    if isinstance(v, dict) and v.get("name", "").lower() == clean_name.lower():
-                        meta_info.update(v)
-                        break
+        # Authoritative lookup from Biometric Repository (SQLite)
+        subject_record = biometric_repo.get_subject_by_name(clean_name)
+        if subject_record:
+            meta_info.update(subject_record)
+        else:
+            # Fallback to metadata.json cache
+            metadata_path = os.path.join(DATA_DIR, "metadata.json")
+            if os.path.exists(metadata_path):
+                with open(metadata_path) as f:
+                    data = json.load(f)
+                    for k, v in data.items():
+                        if isinstance(v, dict) and v.get("name", "").lower() == clean_name.lower():
+                            meta_info.update(v)
+                            break
 
         return JSONResponse(content={
             "status": "success",
@@ -664,6 +712,7 @@ def find_available_port(start_port=8000, max_attempts=10):
                 return port
             except OSError:
                 continue
+            
     return start_port
 
 

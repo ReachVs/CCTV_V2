@@ -483,6 +483,23 @@
             box-shadow: 0 0 20px rgba(255, 183, 0, 0.2);
         }
 
+        .hud-telemetry-card.contended {
+            border-color: #ff9100;
+            box-shadow: 0 0 24px rgba(255, 145, 0, 0.4);
+            animation: pulse-contended 1.5s infinite alternate;
+        }
+
+        .hud-telemetry-card.unverified {
+            border-color: #64748b;
+            box-shadow: 0 0 12px rgba(100, 116, 139, 0.2);
+            opacity: 0.85;
+        }
+
+        @keyframes pulse-contended {
+            from { border-color: #ff9100; box-shadow: 0 0 12px rgba(255, 145, 0, 0.25); }
+            to { border-color: #ffb74d; box-shadow: 0 0 24px rgba(255, 183, 77, 0.5); }
+        }
+
         .hud-card-top {
             display: flex;
             justify-content: space-between;
@@ -1248,13 +1265,68 @@
 
             container.innerHTML = tracks.map(primary => {
                 const rawName = (primary.name || "").toUpperCase();
-                const isScanning = rawName.includes('SCANNING');
-                const isUnknown = rawName.includes('UNKNOWN');
+                const isContended = primary.is_contended || (primary.status === 'CONTENDED') || rawName.includes('CONTENDED');
+                const isUnverified = !isContended && (rawName.includes('UNVERIFIED') || primary.status === 'UNVERIFIED');
+                const isScanning = !isContended && !isUnverified && (rawName.includes('SCANNING') || primary.status === 'SCANNING');
+                const isUnknown = !isContended && !isUnverified && (rawName.includes('UNKNOWN') || primary.status === 'UNKNOWN');
                 const trackId = primary.track_id;
                 const meta = primary.meta || {};
                 const safeName = (primary.name || "").replace(/'/g, "\\'");
 
-                if (isScanning) {
+                if (isContended) {
+                    return `
+                        <div class="hud-telemetry-card clickable-card contended" data-person-name="${safeName}">
+                            <div class="hud-card-top">
+                                <div class="hud-card-prompt" style="color:#ff9100">&gt;CROSSOVER_LOCK #${trackId}</div>
+                                <div class="hud-card-status"><span class="hud-access">ACCESS: <strong style="color:#ff9100">FROZEN (CONTENDED)</strong></span></div>
+                            </div>
+                            <div class="hud-card-body">
+                                <div class="hud-portrait-container">
+                                    <div class="hud-corner top-left" style="border-color:#ff9100"></div><div class="hud-corner top-right" style="border-color:#ff9100"></div>
+                                    <div class="hud-corner bottom-left" style="border-color:#ff9100"></div><div class="hud-corner bottom-right" style="border-color:#ff9100"></div>
+                                    <img src="${defaultSvg}" class="hud-portrait-img" alt="Contended">
+                                </div>
+                                <div class="hud-info-column">
+                                    <div class="hud-attr-title" style="color:#ff9100">&gt; ANTI-ID-SWAP ACTIVE</div>
+                                    <div class="info-row"><span class="info-lbl">STATUS:</span><span class="info-val" style="color:#ff9100">CROSSOVER OCCLUSION</span></div>
+                                    <div class="info-row"><span class="info-lbl">BIOMETRICS:</span><span class="info-val">EXTRACTION FROZEN</span></div>
+                                    <div class="info-row"><span class="info-lbl">SEPARATION:</span><span class="info-val">AWAITING 3 FRAMES</span></div>
+                                    <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge" style="color:#ff9100">SUSPENDED</span></div>
+                                </div>
+                            </div>
+                            <div class="hud-match-block">
+                                <div class="meter-label"><span style="color:#ff9100">CROSSOVER CONTENTION</span><span>FROZEN</span></div>
+                                <div class="bar-bg"><div class="bar-fill" style="width:100%; background:#ff9100;"></div></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (isUnverified) {
+                    return `
+                        <div class="hud-telemetry-card clickable-card unverified" data-person-name="${safeName}">
+                            <div class="hud-card-top">
+                                <div class="hud-card-prompt">&gt;PERSON_ID #${trackId}</div>
+                                <div class="hud-card-status"><span class="hud-access">ACCESS: <strong style="color:#64748b">UNVERIFIED</strong></span></div>
+                            </div>
+                            <div class="hud-card-body">
+                                <div class="hud-portrait-container">
+                                    <div class="hud-corner top-left" style="border-color:#64748b"></div><div class="hud-corner top-right" style="border-color:#64748b"></div>
+                                    <div class="hud-corner bottom-left" style="border-color:#64748b"></div><div class="hud-corner bottom-right" style="border-color:#64748b"></div>
+                                    <img src="${defaultSvg}" class="hud-portrait-img" alt="Unverified">
+                                </div>
+                                <div class="hud-info-column">
+                                    <div class="hud-attr-title" style="color:#94a3b8">&gt; UNVERIFIED TARGET</div>
+                                    <div class="info-row"><span class="info-lbl">STATUS:</span><span class="info-val">NO CLEAR FACE</span></div>
+                                    <div class="info-row"><span class="info-lbl">REASON:</span><span class="info-val">OCCLUSION / LIMB</span></div>
+                                    <div class="info-row"><span class="info-lbl">ACCESS:</span><span class="info-val access-badge" style="color:#64748b">UNVERIFIED</span></div>
+                                </div>
+                            </div>
+                            <div class="hud-match-block">
+                                <div class="meter-label"><span>CONFIDENCE</span><span>0.0%</span></div>
+                                <div class="bar-bg"><div class="bar-fill" style="width:0%"></div></div>
+                            </div>
+                        </div>
+                    `;
+                } else if (isScanning) {
                     return `
                         <div class="hud-telemetry-card clickable-card scanning" data-person-name="${safeName}" onclick="openDossierModalForName('${safeName}')">
                             <div class="hud-card-top">

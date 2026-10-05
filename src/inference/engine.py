@@ -692,10 +692,9 @@ class BiometricTrackingEngine:
                             session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
                             session.enter_contention(blacklist_expiration_frame=current_frame_num + 45)
                             t_cache = self.track_cache.setdefault(tid, {})
-                            if t_cache.get("is_confirmed", False) or not self.active_tracks.get(tid, "").startswith("Scanning"):
-                                t_cache["is_confirmed"] = False
-                                t_cache["history"] = []
-                                self.active_tracks[tid] = f"Contended Track {tid}"
+                            t_cache["is_confirmed"] = False
+                            t_cache["history"] = []
+                            self.active_tracks[tid] = f"Contended Track {tid}"
 
                         if tid1 not in prev_contended or tid2 not in prev_contended:
                             new_audit_events.append({
@@ -844,6 +843,9 @@ class BiometricTrackingEngine:
                         break
 
             is_contended_flag = (track_id in self.contended_tracks)
+            if is_contended_flag:
+                is_confirmed = False
+                subject_name = f"Contended Track {track_id}"
             curr_status = (
                 TrackStatus.CONTENDED.value if is_contended_flag else
                 (TrackStatus.UNVERIFIED.value if is_unverified else
@@ -853,7 +855,7 @@ class BiometricTrackingEngine:
             session = self._get_or_create_session(track_id, curr_box, current_frame_num)
             session.status = TrackStatus(curr_status)
             session.confidence = 0.85 if is_confirmed else 0.50
-            session.identity_name = subject_name if is_confirmed and not is_unknown else (subject_name if not is_scanning else "")
+            session.identity_name = f"Contended Track {track_id}" if is_contended_flag else (subject_name if is_confirmed and not is_unknown else (subject_name if not is_scanning else ""))
             session.keypoints = self.track_keypoints.get(track_id)
             session.meta = meta_dict
 
@@ -1219,6 +1221,11 @@ class BiometricTrackingEngine:
 
     def _handle_embedding_result(self, track_id: int, emb: Optional[np.ndarray], ratio: Any):
         with self.lock:
+            # If the track is currently in crossover contention, drop in-flight embedding.
+            # Prevents face extraction from confirming identity or turning green during occlusion.
+            if track_id in self.contended_tracks:
+                return
+
             t_cache = self.track_cache.setdefault(track_id, {
                 "failed_attempts": 0,
                 "is_confirmed": False,

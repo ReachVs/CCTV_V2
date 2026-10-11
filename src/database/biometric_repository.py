@@ -144,6 +144,31 @@ class BiometricRepository:
         conn.close()
         return dict(row) if row else None
 
+    def get_subject_vectors(self, name: str) -> List[np.ndarray]:
+        """Retrieves all stored 512D embedding vectors for a subject by name."""
+        subj = self.get_subject_by_name(name)
+        if not subj:
+            return []
+        conn = self._get_connection()
+        cur = conn.cursor()
+        cur.execute("""
+            SELECT embedding FROM person_vectors
+            WHERE person_id = ?
+            ORDER BY id ASC;
+        """, (subj["id"],))
+        rows = cur.fetchall()
+        conn.close()
+        vectors = []
+        for r in rows:
+            try:
+                raw = json.loads(r["embedding"])
+                arr = np.array(raw, dtype=np.float32)
+                if arr.size == 512:
+                    vectors.append(_l2_normalize(arr))
+            except Exception:
+                pass
+        return vectors
+
     def add_subject(
         self,
         name: str,

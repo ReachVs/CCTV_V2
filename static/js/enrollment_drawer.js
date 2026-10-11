@@ -144,7 +144,7 @@ class EnrollmentDrawer {
             const res = await fetch('/api/enroll/preview', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ images: b64List })
+                body: JSON.stringify({ images_base64: b64List })
             });
 
             const data = await res.json();
@@ -237,18 +237,21 @@ class EnrollmentDrawer {
                 return;
             }
 
+            const syncOverlay = document.getElementById('biometric-sync-overlay');
+            if (syncOverlay) syncOverlay.classList.add('active');
+
             this.commitBtn.disabled = true;
             this.commitBtn.textContent = 'Extracting 512D ArcFace Vectors...';
 
             const payload = {
-                name: name,
+                full_name: name,
                 occupation: (document.getElementById('drawer-occupation')?.value || 'SECURITY SPECIALIST').trim(),
                 clearance: (document.getElementById('drawer-clearance')?.value || 'LEVEL 1 GRANTED').trim(),
                 phone: (document.getElementById('drawer-phone')?.value || 'N/A').trim(),
                 dob: (document.getElementById('drawer-dob')?.value || 'N/A').trim(),
                 address: (document.getElementById('drawer-address')?.value || 'SYSTEM DATABASE').trim(),
                 threat_level: (document.getElementById('drawer-threat')?.value || 'LOW').trim(),
-                approved_crops: approvedCrops
+                approved_crops_base64: approvedCrops
             };
 
             try {
@@ -260,7 +263,11 @@ class EnrollmentDrawer {
 
                 const data = await res.json();
                 if (res.ok && data.status === 'success') {
-                    this.showToast(`Enrolled '${name}' with ${data.exemplar_count} templates! Hot-reloaded live index.`, 'info');
+                    // Allow HUD loading overlay to be clearly visible while engine resets
+                    await new Promise(r => setTimeout(r, 1000));
+                    if (syncOverlay) syncOverlay.classList.remove('active');
+
+                    this.showToast(`Enrolled '${name}' with ${data.exemplar_count} templates! Engine reset & hot-reloaded.`, 'info');
                     
                     // Update global profile count badge if present on dashboard
                     const profilesEl = document.getElementById('stat-profiles');
@@ -268,20 +275,39 @@ class EnrollmentDrawer {
                         profilesEl.textContent = data.total_profiles;
                     }
 
-                    // Reset form after 1.5s
+                    // Reset form after short delay
                     setTimeout(() => {
                         this.uploadedPreviews = [];
                         this.renderPreviews();
                         if (nameInput) nameInput.value = '';
                         this.close();
-                    }, 1400);
-                } else {
-                    this.showToast(data.message || 'Error committing enrollment to database.', 'error');
+                    }, 1200);
+                } else if (res.status === 409) {
+                    if (syncOverlay) syncOverlay.classList.remove('active');
+                    const conflictMsg = data.detail || (data.conflicting_subject ? `Face collides with '${data.conflicting_subject}'!` : 'Biometric collision detected!');
+                    this.showToast(`SECURITY ALERT: ${conflictMsg}`, 'error');
                     this.commitBtn.disabled = false;
+                    this.commitBtn.innerHTML = `
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        Retry Biometric Enrollment
+                    `;
+                } else {
+                    if (syncOverlay) syncOverlay.classList.remove('active');
+                    this.showToast(data.detail || data.message || 'Error committing enrollment to database.', 'error');
+                    this.commitBtn.disabled = false;
+                    this.commitBtn.innerHTML = `
+                        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                        Commit Enrollment
+                    `;
                 }
             } catch (err) {
+                if (syncOverlay) syncOverlay.classList.remove('active');
                 this.showToast(`Enrollment failed: ${err.message}`, 'error');
                 this.commitBtn.disabled = false;
+                this.commitBtn.innerHTML = `
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polyline points="20 6 9 17 4 12"/></svg>
+                    Commit Enrollment
+                `;
             }
         });
     }

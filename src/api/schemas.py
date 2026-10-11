@@ -23,10 +23,11 @@ class FaceEnrollmentResponse(BaseSchema):
     message: str = Field(...)
     profile_id: Optional[int] = Field(default=None)
     total_profiles: Optional[int] = Field(default=None)
+    conflicting_subject: Optional[str] = Field(default=None, description="Name of conflicting subject if biometric collision detected")
 
 
 class FacePreviewRequest(BaseSchema):
-    images_base64: List[str] = Field(default_factory=list, description="Array of base64 encoded images to preview & curate")
+    images_base64: List[str] = Field(default_factory=list, alias="images", description="Array of base64 encoded images to preview & curate")
 
 
 class FacePreviewItem(BaseSchema):
@@ -45,14 +46,14 @@ class FacePreviewResponse(BaseSchema):
 
 
 class FaceCommitEnrollmentRequest(BaseSchema):
-    full_name: str = Field(..., min_length=1, description="Full name of subject to enroll")
+    full_name: str = Field(..., min_length=1, alias="name", description="Full name of subject to enroll")
     phone_number: Optional[str] = Field(default="", description="Contact phone number")
     occupation: Optional[str] = Field(default="", description="Occupation or role title")
     dob: Optional[str] = Field(default="", description="Date of birth")
     clearance: Optional[str] = Field(default="LEVEL 1", description="Access clearance level")
     address: Optional[str] = Field(default="", description="Primary address")
     threat_level: Optional[str] = Field(default="LOW", description="Assigned threat level assessment")
-    approved_crops_base64: List[str] = Field(default_factory=list, description="List of approved face crop base64 strings to index")
+    approved_crops_base64: List[str] = Field(default_factory=list, alias="approved_crops", description="List of approved face crop base64 strings to index")
 
 
 class CameraFeedConfig(BaseSchema):

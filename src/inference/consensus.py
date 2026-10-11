@@ -66,6 +66,11 @@ class IdentityConsensus:
         for name in stale_names:
             self.active_identity_claims.pop(name, None)
 
+    def reset(self) -> None:
+        """Flushes all vote histories and active claims across all tracks."""
+        self._vote_histories.clear()
+        self.active_identity_claims.clear()
+
     def cleanup_stale_claims(
         self,
         active_track_ids: Optional[List[int]],

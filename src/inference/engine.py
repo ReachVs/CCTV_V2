@@ -495,6 +495,22 @@ class BiometricTrackingEngine:
         if self._embedder is not None and hasattr(self._embedder, "_init_model"):
             self._embedder._init_model()
 
+    def reset_state(self) -> None:
+        """Flushes all active tracking sessions, track caches, and consensus histories."""
+        with self.lock:
+            self.active_tracks.clear()
+            self._sessions.clear()
+            self.track_last_seen.clear()
+            self.track_first_seen.clear()
+            self.track_keypoints.clear()
+            self.identified_cooldowns.clear()
+            self.track_cache.clear()
+            if hasattr(self, "consensus") and hasattr(self.consensus, "reset"):
+                self.consensus.reset()
+            if hasattr(self, "jitter_engine") and hasattr(self.jitter_engine, "track_positions"):
+                self.jitter_engine.track_positions.clear()
+            print("[BiometricEngine] State successfully reset: flushed tracks and consensus caches.")
+
     def reload_index(self, index_path: Optional[str] = None, metadata_path: Optional[str] = None) -> None:
         """Atomic hot-reload of FAISS vector index and metadata without dropping active tracks."""
         with self.lock:

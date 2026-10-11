@@ -1228,3 +1228,38 @@ header.app-header {
 .scanlines-overlay.off {
     opacity: 0;
 }
+
+/* ==========================================================================
+   BIOMETRIC ENGINE SYNCHRONIZATION OVERLAY
+   ========================================================================== */
+@keyframes spin {
+    from { transform: rotate(0deg); }
+    to { transform: rotate(360deg); }
+}
+
+.biometric-sync-overlay {
+    position: fixed;
+    inset: 0;
+    z-index: 10000;
+    background: rgba(10, 14, 23, 0.88);
+    backdrop-filter: blur(8px);
+    display: none;
+    flex-direction: column;
+    align-items: center;
+    justify-content: center;
+    gap: 16px;
+}
+
+.biometric-sync-overlay.active {
+    display: flex;
+}
+
+.sync-spinner {
+    width: 52px;
+    height: 52px;
+    border: 3px solid rgba(6, 182, 212, 0.2);
+    border-top-color: var(--cyan-accent);
+    border-radius: 50%;
+    animation: spin 0.85s linear infinite;
+    box-shadow: 0 0 20px rgba(6, 182, 212, 0.3);
+}

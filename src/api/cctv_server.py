@@ -106,6 +106,8 @@ enrollment_manager = BiometricEnrollmentManager(
     embedder=getattr(engine, "embedder", None),
     biometric_repo=biometric_repo,
     engine=engine,
+    audit_logger=audit_repo,
+    max_exemplars=6,
 )
 
 TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
@@ -448,6 +450,11 @@ async def commit_enrollment_api(req: FaceCommitEnrollmentRequest):
             profile_id=result.subject_id,
             total_profiles=result.total_profiles
         )
+    elif result.status == "conflict":
+        raise HTTPException(
+            status_code=status.HTTP_409_CONFLICT,
+            detail=result.message
+        )
     else:
         raise HTTPException(status_code=400, detail=result.message)
 
@@ -456,45 +463,20 @@ async def commit_enrollment_api(req: FaceCommitEnrollmentRequest):
 @app.post("/api/enroll", response_model=FaceEnrollmentResponse)
 async def enroll_subject_api(req: FaceEnrollmentRequest):
     """
-    Backward-compatible enrollment endpoint delegating directly to BiometricEnrollmentManager.
+    Backward-compatible enrollment endpoint adapter delegating to commit_enrollment_api.
     """
-    if not req.full_name.strip():
-        raise HTTPException(status_code=400, detail="Full Name is required.")
-
     image_b64_list = req.images_base64 if req.images_base64 else ([req.image_base64] if req.image_base64 else [])
-    raw_crops = []
-    for b64 in image_b64_list:
-        if not b64:
-            continue
-        if "," in b64:
-            b64 = b64.split(",")[1]
-        raw_crops.append(base64.b64decode(b64))
-
-    profile_data = {
-        "occupation": req.occupation,
-        "clearance": req.clearance,
-        "phone": req.phone_number,
-        "dob": req.dob,
-        "address": req.address,
-        "threat_level": req.threat_level
-    }
-
-    result = await asyncio.to_thread(
-        enrollment_manager.commit_enrollment,
-        req.full_name,
-        profile_data,
-        raw_crops
+    commit_req = FaceCommitEnrollmentRequest(
+        full_name=req.full_name,
+        phone_number=req.phone_number,
+        occupation=req.occupation,
+        dob=req.dob,
+        clearance=req.clearance,
+        address=req.address,
+        threat_level=req.threat_level,
+        approved_crops_base64=image_b64_list
     )
-
-    if result.status == "success":
-        return FaceEnrollmentResponse(
-            status="success",
-            message=result.message,
-            profile_id=result.subject_id,
-            total_profiles=result.total_profiles
-        )
-    else:
-        raise HTTPException(status_code=400, detail=result.message)
+    return await commit_enrollment_api(commit_req)
 
 
 @app.get("/api/events", response_model=TelemetryResponse)

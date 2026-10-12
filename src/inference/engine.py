@@ -1117,9 +1117,10 @@ class BiometricTrackingEngine:
         with self.lock:
             result = []
             for tid, name in self.active_tracks.items():
-                is_scanning = str(name).startswith("Scanning")
+                if str(name).startswith("Scanning") or str(name).startswith("Unverified") or str(name) == "Unknown Person":
+                    continue
                 meta_info = {}
-                if not is_scanning and isinstance(self.metadata, dict):
+                if isinstance(self.metadata, dict):
                     for k, val in self.metadata.items():
                         if isinstance(val, dict) and val.get("name", "").lower() == str(name).lower():
                             meta_info = val
@@ -1130,11 +1131,11 @@ class BiometricTrackingEngine:
                 result.append(TrackedSubject(
                     track_id=int(tid),
                     name=str(name),
-                    confidence=0.85 if is_conf else (0.35 if is_scanning else 0.5),
+                    confidence=0.85 if is_conf else 0.5,
                     box=box,
                     is_confirmed=is_conf,
-                    is_scanning=is_scanning,
-                    is_unknown=(str(name) == "Unknown Person"),
+                    is_scanning=False,
+                    is_unknown=False,
                     is_contended=is_cont,
                     keypoints=self.track_keypoints.get(tid),
                     meta=meta_info

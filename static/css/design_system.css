@@ -874,23 +874,27 @@ header.app-header {
     flex-direction: column;
     gap: 12px;
     position: relative;
-    cursor: pointer;
+    cursor: default;
     transition: all var(--transition-smooth);
 }
 
-.hud-telemetry-card:hover {
-    border-color: var(--border-highlight);
+.hud-telemetry-card.clickable {
+    cursor: pointer !important;
+}
+
+.hud-telemetry-card.clickable:hover {
+    border-color: var(--cyan-accent);
     background: rgba(20, 26, 38, 0.95);
     transform: translateY(-2px);
-    box-shadow: 0 8px 24px rgba(0, 0, 0, 0.4);
+    box-shadow: 0 8px 24px rgba(6, 182, 212, 0.25);
 }
 
 .hud-telemetry-card.verified {
     border-color: rgba(16, 185, 129, 0.4);
 }
-.hud-telemetry-card.verified:hover {
+.hud-telemetry-card.verified.clickable:hover {
     border-color: var(--emerald-verified);
-    box-shadow: 0 0 20px rgba(16, 185, 129, 0.25);
+    box-shadow: 0 0 20px rgba(16, 185, 129, 0.35);
 }
 
 .hud-telemetry-card.scanning {

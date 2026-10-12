@@ -256,7 +256,7 @@ class CCTVClient {
             return;
         }
 
-        const now = Date.now();
+        const now = performance.now();
         // If user is hovering or interacting with cards, delay re-render by up to 1.5s
         if (this._isHoveringTelemetry && this.lastTelemetryRenderTime && (now - this.lastTelemetryRenderTime < 1500)) {
             return;
@@ -267,7 +267,7 @@ class CCTVClient {
         const html = tracks.map(t => {
             const name = t.name || 'Unknown';
             const meta = t.meta || {};
-            const isConfirmed = name !== 'Unknown' && name !== 'Scanning...';
+            const isConfirmed = name !== 'Unknown' && !name.startsWith('Scanning') && !name.startsWith('Unverified');
             const trackId = t.track_id !== undefined ? t.track_id : '?';
             
             // Confidence calculation
@@ -288,14 +288,20 @@ class CCTVClient {
             }
 
             const barColorClass = confidencePct >= 75 ? '' : (confidencePct >= 50 ? 'warn' : 'alert');
+            const clickableClass = isConfirmed ? 'clickable' : '';
+            const clickAttr = isConfirmed ? 'data-clickable="true"' : 'data-clickable="false"';
+            const cursorStyle = isConfirmed ? 'cursor: pointer;' : 'cursor: default;';
+            const clickHandler = isConfirmed ? `onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(trackId)}')"` : '';
+            const titleText = isConfirmed ? `title="Click to view Classified Intelligence Dossier for ${this.escapeHtml(name)}"` : '';
 
             return `
-                <div class="hud-telemetry-card ${badgeClass}" 
+                <div class="hud-telemetry-card ${badgeClass} ${clickableClass}" 
                      data-track-id="${encodeURIComponent(trackId)}"
                      data-subject-name="${this.escapeHtml(name)}"
-                     onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(trackId)}')"
-                     style="cursor: pointer;"
-                     title="Click to view Classified Intelligence Dossier">
+                     ${clickAttr}
+                     ${clickHandler}
+                     style="${cursorStyle}"
+                     ${titleText}>
                     
                     <!-- Tactical HUD Corner Brackets -->
                     <div class="hud-corner top-left"></div>
@@ -371,9 +377,11 @@ class CCTVClient {
             const clearance = e.meta?.clearance || e.clearance || 'LEVEL 1';
             const timeStr = e.timestamp ? (e.timestamp.split('T')[1]?.split('.')[0] || e.timestamp) : 'NOW';
             const isAlert = action.includes('DENIED') || action.includes('UNKNOWN');
+            const isKnown = name && name !== 'Subject' && name !== 'Unknown' && !name.startsWith('Scanning') && !name.startsWith('Unverified');
+            const auditClick = isKnown ? `onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(e.track_id || '')}')" style="cursor: pointer;"` : `style="cursor: default;"`;
 
             return `
-                <div class="audit-item" style="cursor: pointer;" onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(e.track_id || '')}')">
+                <div class="audit-item" ${auditClick}>
                     <div>
                         <div class="audit-title" style="color: ${isAlert ? 'var(--rose-threat)' : 'var(--text-primary)'};">
                             ${this.escapeHtml(name)} // ${this.escapeHtml(action)}
@@ -389,10 +397,13 @@ class CCTVClient {
     }
 
     async openDossierModal(name, trackId = null) {
+        // Only confirmed identified personnel are allowed to open the classified dossier
+        if (!name || name === 'Unknown' || name.startsWith('Scanning') || name.startsWith('Unverified')) {
+            return;
+        }
+
         const modal = document.getElementById('dossier-modal');
         if (!modal) return;
-
-        const isUnverified = !name || name === 'Unknown' || name === 'Scanning...' || name === 'Unverified';
 
         // Reset fields to loading state
         const nameEl = document.getElementById('modal-fullname');
@@ -405,42 +416,15 @@ class CCTVClient {
         const galleryEl = document.getElementById('dossier-gallery');
         const notesEl = document.getElementById('modal-intel-notes');
 
-        if (isUnverified) {
-            const trackLabel = trackId ? `TRACK #${trackId}` : 'UNIDENTIFIED SUBJECT';
-            if (nameEl) nameEl.textContent = `${trackLabel} (UNVERIFIED)`;
-            if (accessEl) {
-                accessEl.textContent = 'RESTRICTED / PENDING IDENTIFICATION';
-                accessEl.className = 'd-val';
-                accessEl.style.color = 'var(--amber-warning)';
-            }
-            if (statusEl) statusEl.textContent = 'LIVE SCANNING / TRACKING IN PROGRESS';
-            if (occEl) occEl.textContent = 'UNENROLLED CANDIDATE';
-            if (phoneEl) phoneEl.textContent = 'N/A';
-            if (addressEl) addressEl.textContent = 'SURVEILLANCE FIELD OF VIEW';
-            if (dobEl) dobEl.textContent = 'N/A';
-            if (notesEl) {
-                notesEl.textContent = 'Target is actively tracked by spatial pose detection and ByteTrack. Biometric consensus has not yet reached the verification threshold against enrolled profiles. Click "Enroll Subject" in the navigation bar to register this individual into the biometric repository.';
-            }
-            if (galleryEl) {
-                galleryEl.innerHTML = `
-                    <div class="dossier-thumb" style="display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.03); border: 1px dashed var(--border-medium); padding: 16px; border-radius: var(--radius-sm); text-align: center; width: 100%; height: 100%;">
-                        <img src="/logo.png" alt="Unverified" style="width: 48px; height: 48px; opacity: 0.6; margin-bottom: 8px;">
-                        <span style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">NO ENROLLED RECORD</span>
-                        <button type="button" class="btn-primary-action" onclick="window.cctvClient && window.cctvClient.closeDossierModal(); window.appDrawer && window.appDrawer.openDrawer();" style="margin-top: 10px; font-size: 0.7rem; padding: 6px 12px; width: auto;">ENROLL SUBJECT</button>
-                    </div>
-                `;
-            }
-            modal.classList.add('active');
-            return;
-        }
-
-        // For verified / known subject
         if (nameEl) nameEl.textContent = name;
         if (accessEl) {
             accessEl.textContent = 'QUERYING BIOMETRIC REPOSITORY...';
             accessEl.className = 'd-val access-granted';
             accessEl.style.color = '';
         }
+        if (statusEl) statusEl.textContent = 'CONFIRMED CONSENSUS LOCK';
+        if (occEl) occEl.textContent = 'REGISTERED PERSONNEL';
+        if (notesEl) notesEl.textContent = 'Retrieving classified multi-vector biometric profile...';
         if (galleryEl) {
             galleryEl.innerHTML = `
                 <div class="dossier-thumb">
@@ -448,8 +432,8 @@ class CCTVClient {
                 </div>
             `;
         }
-
         modal.classList.add('active');
+        modal.setAttribute('aria-hidden', 'false');
 
         try {
             const res = await fetch(`/api/subject/${encodeURIComponent(name)}`);
@@ -558,7 +542,7 @@ class CCTVClient {
         if (this.telemetryContainer) {
             this.telemetryContainer.addEventListener('click', (e) => {
                 const card = e.target.closest('.hud-telemetry-card');
-                if (card) {
+                if (card && card.getAttribute('data-clickable') === 'true') {
                     const subjectName = card.getAttribute('data-subject-name') || '';
                     const trackId = card.getAttribute('data-track-id') || '';
                     this.openDossierModal(subjectName, trackId);

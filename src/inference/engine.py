@@ -38,6 +38,14 @@ from src.rendering.annotator import (
     ScriptedAnnotator
 )
 from src.domain.subject_session import SubjectSession, TrackStatus
+from src.domain.track_registry import (
+    TrackRegistry,
+    ActiveTracksProxy,
+    TrackCacheProxy,
+    TrackLastSeenProxy,
+    TrackFirstSeenProxy,
+    TrackKeypointsProxy
+)
 from src.inference.consensus import (
     IdentityConsensus,
     MatchCandidate,
@@ -225,15 +233,10 @@ class BiometricTrackingEngine:
         # Privacy mode flag
         self._pose_only_mode = False
 
-        # Internal Tracking State
+        # Deep Domain Seam: TrackRegistry manages all SubjectSession state
+        self.registry = TrackRegistry()
         self.frame_count = 0
-        self._sessions: Dict[int, SubjectSession] = {}
-        self.active_tracks: Dict[int, str] = {}
-        self.track_last_seen: Dict[int, int] = {}
-        self.track_first_seen: Dict[int, int] = {}
-        self.track_keypoints: Dict[int, List[Dict[str, float]]] = {}
         self.identified_cooldowns: Dict[str, int] = {}
-        self.track_cache: Dict[int, Dict[str, Any]] = {}
 
         # Deep Ingestion & Pre-Filtering Modules
         self.pre_filter = TrackingPreFilter(
@@ -355,69 +358,74 @@ class BiometricTrackingEngine:
     def track_last_submitted_frame(self, val: Dict[int, int]) -> None:
         self.biometric_scheduler.track_last_submitted_frame = val
 
+    @property
+    def _sessions(self) -> Dict[int, SubjectSession]:
+        return self.registry._sessions
+
+    @_sessions.setter
+    def _sessions(self, val: Dict[int, SubjectSession]) -> None:
+        self.registry._sessions = val
+
+    @property
+    def active_tracks(self) -> ActiveTracksProxy:
+        return self.registry.active_tracks
+
+    @active_tracks.setter
+    def active_tracks(self, val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.registry.active_tracks[k] = v
+
+    @property
+    def track_cache(self) -> TrackCacheProxy:
+        return self.registry.track_cache
+
+    @track_cache.setter
+    def track_cache(self, val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.registry.track_cache[k] = v
+
+    @property
+    def track_last_seen(self) -> TrackLastSeenProxy:
+        return self.registry.track_last_seen
+
+    @track_last_seen.setter
+    def track_last_seen(self, val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.registry.track_last_seen[k] = v
+
+    @property
+    def track_first_seen(self) -> TrackFirstSeenProxy:
+        return self.registry.track_first_seen
+
+    @track_first_seen.setter
+    def track_first_seen(self, val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.registry.track_first_seen[k] = v
+
+    @property
+    def track_keypoints(self) -> TrackKeypointsProxy:
+        return self.registry.track_keypoints
+
+    @track_keypoints.setter
+    def track_keypoints(self, val: Any) -> None:
+        if isinstance(val, dict):
+            for k, v in val.items():
+                self.registry.track_keypoints[k] = v
+
     def _get_or_create_session(self, track_id: int, box: Tuple[int, int, int, int], frame_num: int) -> SubjectSession:
-        if track_id not in self._sessions:
-            first_seen = self.track_first_seen.get(track_id, frame_num)
-            session = SubjectSession(
-                track_id=track_id,
-                first_seen=first_seen,
-                last_seen=frame_num,
-                box=box
-            )
-            # Synchronize pre-seeded states from legacy dictionaries if injected by external tests
-            if track_id in self.track_cache:
-                t_c = self.track_cache[track_id]
-                if t_c.get("is_confirmed", False):
-                    name = t_c.get("name", "")
-                    if name == "Unknown Person":
-                        session.mark_unknown()
-                    else:
-                        session.confirm_identity(name, t_c.get("best_dist", 0.5), t_c.get("best_norm", 1.0))
-                elif t_c.get("name"):
-                    session.identity_name = t_c.get("name")
-                session.history = list(t_c.get("history", []))
-                session.valid_face_crops = t_c.get("valid_face_crops", 0)
-                session.failed_attempts = t_c.get("failed_attempts", 0)
-                session.attempts = t_c.get("attempts", 0)
-            elif track_id in self.active_tracks:
-                name = self.active_tracks[track_id]
-                if not name.startswith("Scanning") and not name.startswith("Unverified") and not name.startswith("Contended") and name not in ["Unknown", "Unknown Person", "Ambiguous Match"]:
-                    session.confirm_identity(name, 0.5, 1.0)
-                elif name.startswith("Unverified"):
-                    session.mark_unverified()
-                elif name == "Unknown Person":
-                    session.mark_unknown()
-                elif name.startswith("Contended"):
-                    session.status = TrackStatus.CONTENDED
-                else:
-                    session.identity_name = name
-            self._sessions[track_id] = session
-        else:
-            session = self._sessions[track_id]
-            session.last_seen = frame_num
-            session.box = box
-            # If external test mutated track_cache or active_tracks, sync changes into session
-            if track_id in self.track_cache:
-                t_c = self.track_cache[track_id]
-                if t_c.get("is_confirmed", False) and not session.is_confirmed:
-                    name = t_c.get("name", "")
-                    if name == "Unknown Person":
-                        session.mark_unknown()
-                    else:
-                        session.confirm_identity(name, t_c.get("best_dist", 0.5), t_c.get("best_norm", 1.0))
-                if "history" in t_c and t_c["history"] != session.history:
-                    session.history = list(t_c["history"])
-        return session
+        return self.registry.get_or_create(track_id, box, frame_num)
 
     def get_session(self, track_id: int) -> Optional[SubjectSession]:
         """Thread-safe retrieval of a specific active SubjectSession."""
-        with self.lock:
-            return self._sessions.get(track_id)
+        return self.registry.get(track_id)
 
     def get_all_sessions(self) -> Dict[int, SubjectSession]:
         """Thread-safe snapshot of all active SubjectSession instances."""
-        with self.lock:
-            return dict(self._sessions)
+        return dict(self.registry._sessions)
 
     # -----------------------------------------------------------------
     # Initializers & Index Management
@@ -979,12 +987,7 @@ class BiometricTrackingEngine:
     def purge_track(self, track_id: int) -> None:
         """Purges track state across all internal tables, sessions, and deep modules."""
         with self.lock:
-            self._sessions.pop(track_id, None)
-            self.active_tracks.pop(track_id, None)
-            self.track_last_seen.pop(track_id, None)
-            self.track_first_seen.pop(track_id, None)
-            self.track_keypoints.pop(track_id, None)
-            self.track_cache.pop(track_id, None)
+            self.registry.purge(track_id)
             self.consensus.purge_track(track_id)
             self.pre_filter.purge_track(track_id)
             self.biometric_scheduler.purge_track(track_id)

@@ -26,8 +26,6 @@ class GDPRMemorySanitizer:
                 arr.fill(0)
             except Exception:
                 pass
-            del arr
-            gc.collect()
 
     @staticmethod
     def sanitize_crop_list(crop_list: List[np.ndarray]):
@@ -38,7 +36,6 @@ class GDPRMemorySanitizer:
                 except Exception:
                     pass
         crop_list.clear()
-        gc.collect()
 
 
 class PoseOnlyEstimator:

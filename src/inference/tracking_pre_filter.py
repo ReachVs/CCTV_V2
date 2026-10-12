@@ -81,6 +81,7 @@ class TrackingPreFilter:
 
         # State tracked across frames
         self.head_presence_cache: Dict[int, int] = {}
+        self.head_presence_negative_cache: Dict[int, int] = {}
         self.contended_tracks: Dict[int, int] = {}
         self.contention_blacklist: Dict[int, int] = {}
         self.recent_track_history: Dict[int, Dict[str, Any]] = {}
@@ -89,6 +90,7 @@ class TrackingPreFilter:
         """Purges cached spatial and contention state for a terminated track."""
         with self.lock:
             self.head_presence_cache.pop(track_id, None)
+            self.head_presence_negative_cache.pop(track_id, None)
             self.contended_tracks.pop(track_id, None)
             self.contention_blacklist.pop(track_id, None)
             self.recent_track_history.pop(track_id, None)
@@ -108,6 +110,9 @@ class TrackingPreFilter:
             cached_exp = self.head_presence_cache.get(track_id, 0)
             if current_frame_num <= cached_exp:
                 return True
+            cached_neg = self.head_presence_negative_cache.get(track_id, 0)
+            if current_frame_num <= cached_neg:
+                return False
 
         fx1, fy1, fx2, fy2 = box
         box_h = fy2 - fy1
@@ -128,6 +133,7 @@ class TrackingPreFilter:
                     if aligned is not None:
                         with self.lock:
                             self.head_presence_cache[track_id] = current_frame_num + 15
+                            self.head_presence_negative_cache.pop(track_id, None)
                         return True
                 except Exception:
                     pass
@@ -143,10 +149,13 @@ class TrackingPreFilter:
                         if 0 <= k_id <= 6 and k_conf >= 0.35:
                             with self.lock:
                                 self.head_presence_cache[track_id] = current_frame_num + 15
+                                self.head_presence_negative_cache.pop(track_id, None)
                             return True
             except Exception:
                 pass
 
+        with self.lock:
+            self.head_presence_negative_cache[track_id] = current_frame_num + 15
         return False
 
     def filter_and_arbitrate(
@@ -199,11 +208,9 @@ class TrackingPreFilter:
             area = box_h * box_w
             is_confirmed = track_id in confirmed_track_ids
 
-            # Pre-Admission Head/Shoulder Filter
-            if not is_confirmed:
+            # Pre-Admission Head/Shoulder Filter (only gates new, unconfirmed candidates)
+            if not is_confirmed and track_id not in active_track_ids:
                 if not self.has_head_or_shoulder_presence(frame, (fx1, fy1, fx2, fy2), track_id, current_frame_num):
-                    if track_id in active_track_ids:
-                        suppressed_track_ids.append(track_id)
                     continue
 
             raw_candidates.append({

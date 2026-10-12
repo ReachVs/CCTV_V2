@@ -91,7 +91,7 @@ class CyberpunkHUDAnnotator(Annotator):
         font_scale: float = 0.5,
         thickness: int = 2,
         show_telemetry_bar: bool = False,
-        draw_labels: bool = False,
+        draw_labels: bool = True,
         draw_effects: bool = False,
     ):
         self.font = cv2.FONT_HERSHEY_SIMPLEX

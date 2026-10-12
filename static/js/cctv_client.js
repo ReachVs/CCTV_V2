@@ -482,7 +482,8 @@ class CCTVClient {
 
         const track = document.getElementById('dossier-slider-track');
         const thumbsContainer = document.getElementById('slider-thumbs');
-        const rangeSlider = document.getElementById('dossier-range-slider');
+        const prevBtn = document.getElementById('slider-btn-prev');
+        const nextBtn = document.getElementById('slider-btn-next');
         const viewport = document.getElementById('slider-viewport');
 
         if (!track) return;
@@ -497,20 +498,20 @@ class CCTVClient {
             `;
         }).join('');
 
-        // 2. Configure Scrubber Range Slider (<input type="range">)
-        if (rangeSlider) {
-            rangeSlider.min = '0';
-            rangeSlider.max = String(Math.max(0, total - 1));
-            rangeSlider.value = '0';
-            rangeSlider.step = '1';
-
-            rangeSlider.oninput = (e) => {
-                const idx = parseInt(e.target.value, 10);
-                if (!isNaN(idx)) this.goToSlide(idx);
+        // 2. Wire < (Previous) and > (Next) Buttons
+        if (prevBtn) {
+            prevBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.goToSlide(this.currentSlideIndex - 1);
             };
-            rangeSlider.onchange = (e) => {
-                const idx = parseInt(e.target.value, 10);
-                if (!isNaN(idx)) this.goToSlide(idx);
+        }
+
+        if (nextBtn) {
+            nextBtn.onclick = (e) => {
+                e.preventDefault();
+                e.stopPropagation();
+                this.goToSlide(this.currentSlideIndex + 1);
             };
         }
 
@@ -534,14 +535,7 @@ class CCTVClient {
             };
         }
 
-        // 4. Click image to advance to next angle
-        if (viewport) {
-            viewport.onclick = () => {
-                this.goToSlide(this.currentSlideIndex + 1);
-            };
-        }
-
-        // 5. Touch Swipe on Mobile/Tablet
+        // 4. Touch Swipe on Mobile/Tablet
         if (viewport && !viewport._sliderTouchBound) {
             viewport._sliderTouchBound = true;
             let touchStartX = 0;
@@ -595,15 +589,6 @@ class CCTVClient {
         const angleEl = document.getElementById('slider-angle-label');
         if (angleEl && this.sliderImages[newIndex]) {
             angleEl.textContent = this.formatAngleLabel(this.sliderImages[newIndex].filename || '');
-        }
-
-        // Range Slider Scrubber Position & Illuminated Progress Track
-        const rangeSlider = document.getElementById('dossier-range-slider');
-        if (rangeSlider) {
-            rangeSlider.value = String(newIndex);
-            const max = parseInt(rangeSlider.max, 10) || 1;
-            const pct = max > 0 ? (newIndex / max) * 100 : 0;
-            rangeSlider.style.background = `linear-gradient(to right, var(--cyan-accent) 0%, var(--cyan-accent) ${pct}%, rgba(255, 255, 255, 0.12) ${pct}%, rgba(255, 255, 255, 0.12) 100%)`;
         }
 
         // Update Thumbnails

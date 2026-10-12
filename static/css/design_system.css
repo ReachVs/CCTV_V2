@@ -1228,59 +1228,60 @@ header.app-header {
     pointer-events: none;
 }
 
-/* Sleek Full-Width Cybernetic Range Scrubber Bar */
-.slider-scrubber-row {
-    display: flex;
+/* Sleek Tactical < and > Navigation Buttons */
+.slider-arrow-btn {
+    position: absolute;
+    top: 50%;
+    transform: translateY(-50%);
+    z-index: 15;
+    width: 40px;
+    height: 40px;
+    border-radius: 50%;
+    background: rgba(8, 14, 24, 0.78);
+    border: 1px solid rgba(6, 182, 212, 0.45);
+    color: var(--cyan-accent);
+    display: inline-flex;
     align-items: center;
-    background: rgba(10, 14, 23, 0.85);
-    border: 1px solid var(--border-hairline);
-    border-radius: var(--radius-sm);
-    padding: 10px 14px;
-    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
-}
-
-.cyber-range-slider {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 100%;
-    height: 8px;
-    border-radius: var(--radius-full);
-    background: rgba(255, 255, 255, 0.12);
-    outline: none;
+    justify-content: center;
     cursor: pointer;
-    transition: background 0.15s ease;
+    box-shadow: 0 4px 14px rgba(0, 0, 0, 0.7), 0 0 10px rgba(6, 182, 212, 0.25);
+    transition: all 0.2s cubic-bezier(0.16, 1, 0.3, 1);
+    backdrop-filter: blur(8px);
+    opacity: 0.85;
 }
 
-.cyber-range-slider:hover {
-    background: rgba(255, 255, 255, 0.2);
+.slider-arrow-btn.left {
+    left: 10px;
 }
 
-.cyber-range-slider::-webkit-slider-thumb {
-    -webkit-appearance: none;
-    appearance: none;
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--cyan-accent);
-    border: 2.5px solid #ffffff;
-    box-shadow: 0 0 14px rgba(6, 182, 212, 0.95);
-    cursor: pointer;
-    transition: transform 0.15s ease, box-shadow 0.15s ease;
+.slider-arrow-btn.right {
+    right: 10px;
 }
 
-.cyber-range-slider::-webkit-slider-thumb:hover {
-    transform: scale(1.24);
-    box-shadow: 0 0 20px rgba(6, 182, 212, 1);
+.slider-arrow-btn:hover {
+    opacity: 1;
+    background: rgba(6, 182, 212, 0.28);
+    border-color: var(--cyan-accent);
+    color: #ffffff;
+    box-shadow: 0 0 18px rgba(6, 182, 212, 0.75);
+    transform: translateY(-50%) scale(1.12);
 }
 
-.cyber-range-slider::-moz-range-thumb {
-    width: 22px;
-    height: 22px;
-    border-radius: 50%;
-    background: var(--cyan-accent);
-    border: 2.5px solid #ffffff;
-    box-shadow: 0 0 14px rgba(6, 182, 212, 0.95);
-    cursor: pointer;
+.slider-arrow-btn:active {
+    transform: translateY(-50%) scale(0.94);
+}
+
+.slider-arrow-btn svg {
+    filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.7));
+    transition: transform 0.15s ease;
+}
+
+.slider-arrow-btn.left:hover svg {
+    transform: translateX(-2px);
+}
+
+.slider-arrow-btn.right:hover svg {
+    transform: translateX(2px);
 }
 
 /* Mini Thumbnails Strip */

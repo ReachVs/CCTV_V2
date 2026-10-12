@@ -5,7 +5,7 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}SLEEPER AGENT // Defense-Grade CCTV Biometric Platform{% endblock %}</title>
     <!-- Modern Design System -->
-    <link rel="stylesheet" href="/static/css/design_system.css?v=20261013_07">
+    <link rel="stylesheet" href="/static/css/design_system.css?v=20261013_08">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -187,8 +187,12 @@
                             <span class="slider-sub-status">VECTOR ALIGNED</span>
                         </div>
 
-                        <!-- Main Sliding Viewport -->
-                        <div class="dossier-slider-viewport" id="slider-viewport" title="Click image to advance angle">
+                        <!-- Main Sliding Viewport with < and > Navigation Buttons -->
+                        <div class="dossier-slider-viewport" id="slider-viewport">
+                            <button type="button" class="slider-arrow-btn left" id="slider-btn-prev" aria-label="Previous biometric image" title="Previous angle (<)">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="15 18 9 12 15 6"/></svg>
+                            </button>
+
                             <!-- Sliding Track -->
                             <div class="dossier-slider-track" id="dossier-slider-track">
                                 <div class="dossier-slide active">
@@ -196,16 +200,15 @@
                                 </div>
                             </div>
 
+                            <button type="button" class="slider-arrow-btn right" id="slider-btn-next" aria-label="Next biometric image" title="Next angle (>)">
+                                <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" stroke-linecap="round" stroke-linejoin="round"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+
                             <!-- Tactical Corner Brackets -->
                             <div class="hud-corner top-left"></div>
                             <div class="hud-corner top-right"></div>
                             <div class="hud-corner bottom-left"></div>
                             <div class="hud-corner bottom-right"></div>
-                        </div>
-
-                        <!-- Sleek Full-Width Cybernetic Range Scrubber Bar -->
-                        <div class="slider-scrubber-row">
-                            <input type="range" id="dossier-range-slider" min="0" max="5" value="0" step="1" class="cyber-range-slider" aria-label="Slide biometric image index">
                         </div>
 
                         <!-- Mini Thumbnail Strip (Click to Jump) -->
@@ -257,8 +260,8 @@
     </div>
 
     <!-- Global Client Logic -->
-    <script src="/static/js/cctv_client.js?v=20261013_07"></script>
-    <script src="/static/js/enrollment_drawer.js?v=20261013_07"></script>
+    <script src="/static/js/cctv_client.js?v=20261013_08"></script>
+    <script src="/static/js/enrollment_drawer.js?v=20261013_08"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             window.appDrawer = new EnrollmentDrawer();

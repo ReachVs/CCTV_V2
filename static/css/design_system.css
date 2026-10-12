@@ -1228,110 +1228,15 @@ header.app-header {
     pointer-events: none;
 }
 
-/* Tactile Viewport Navigation Buttons */
-.slider-nav-btn {
-    position: absolute;
-    top: 50%;
-    transform: translateY(-50%);
-    z-index: 15;
-    width: 36px;
-    height: 36px;
-    border-radius: 50%;
-    background: rgba(8, 14, 24, 0.85);
-    border: 1px solid rgba(6, 182, 212, 0.5);
-    color: var(--cyan-accent);
-    display: inline-flex;
-    align-items: center;
-    justify-content: center;
-    cursor: pointer;
-    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.65), 0 0 10px rgba(6, 182, 212, 0.25);
-    transition: all 0.18s cubic-bezier(0.16, 1, 0.3, 1);
-    backdrop-filter: blur(6px);
-    opacity: 0.85;
-}
-
-.slider-nav-btn.left {
-    left: 12px;
-}
-
-.slider-nav-btn.right {
-    right: 12px;
-}
-
-.slider-nav-btn:hover {
-    opacity: 1;
-    background: rgba(6, 182, 212, 0.25);
-    border-color: var(--cyan-accent);
-    color: #ffffff;
-    box-shadow: 0 0 16px rgba(6, 182, 212, 0.7);
-    transform: translateY(-50%) scale(1.12);
-}
-
-.slider-nav-btn:active {
-    transform: translateY(-50%) scale(0.96);
-}
-
-.slider-nav-btn svg {
-    filter: drop-shadow(0 0 6px rgba(6, 182, 212, 0.8));
-    transition: transform 0.15s ease;
-}
-
-.slider-nav-btn.left:hover svg {
-    transform: translateX(-2px);
-}
-
-.slider-nav-btn.right:hover svg {
-    transform: translateX(2px);
-}
-
-/* Scrubber Controls Row */
+/* Sleek Full-Width Cybernetic Range Scrubber Bar */
 .slider-scrubber-row {
     display: flex;
     align-items: center;
-    gap: 10px;
     background: rgba(10, 14, 23, 0.85);
     border: 1px solid var(--border-hairline);
     border-radius: var(--radius-sm);
-    padding: 8px 10px;
-}
-
-.btn-slider-action {
-    background: rgba(16, 21, 30, 0.95);
-    border: 1px solid var(--border-medium);
-    color: #ffffff;
-    font-family: var(--font-mono);
-    font-size: 0.68rem;
-    font-weight: 700;
-    letter-spacing: 0.05em;
-    padding: 6px 12px;
-    border-radius: 4px;
-    cursor: pointer;
-    display: inline-flex;
-    align-items: center;
-    gap: 5px;
-    white-space: nowrap;
-    transition: all var(--transition-fast);
-}
-
-.btn-slider-action:hover {
-    background: rgba(6, 182, 212, 0.25);
-    border-color: var(--cyan-accent);
-    color: var(--cyan-accent);
-    box-shadow: 0 0 12px rgba(6, 182, 212, 0.4);
-    transform: translateY(-1px);
-}
-
-.btn-slider-action:active {
-    transform: translateY(0);
-}
-
-.slider-range-box {
-    flex: 1;
-    display: flex;
-    flex-direction: column;
-    gap: 6px;
-    position: relative;
-    padding: 0 4px;
+    padding: 10px 14px;
+    box-shadow: inset 0 1px 3px rgba(0, 0, 0, 0.6);
 }
 
 .cyber-range-slider {
@@ -1353,62 +1258,29 @@ header.app-header {
 .cyber-range-slider::-webkit-slider-thumb {
     -webkit-appearance: none;
     appearance: none;
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--cyan-accent);
-    border: 2px solid #ffffff;
-    box-shadow: 0 0 12px rgba(6, 182, 212, 0.95);
+    border: 2.5px solid #ffffff;
+    box-shadow: 0 0 14px rgba(6, 182, 212, 0.95);
     cursor: pointer;
     transition: transform 0.15s ease, box-shadow 0.15s ease;
 }
 
 .cyber-range-slider::-webkit-slider-thumb:hover {
-    transform: scale(1.22);
-    box-shadow: 0 0 18px rgba(6, 182, 212, 1);
+    transform: scale(1.24);
+    box-shadow: 0 0 20px rgba(6, 182, 212, 1);
 }
 
 .cyber-range-slider::-moz-range-thumb {
-    width: 20px;
-    height: 20px;
+    width: 22px;
+    height: 22px;
     border-radius: 50%;
     background: var(--cyan-accent);
-    border: 2px solid #ffffff;
-    box-shadow: 0 0 12px rgba(6, 182, 212, 0.95);
+    border: 2.5px solid #ffffff;
+    box-shadow: 0 0 14px rgba(6, 182, 212, 0.95);
     cursor: pointer;
-}
-
-.slider-range-labels {
-    display: flex;
-    justify-content: space-between;
-    padding: 0 2px;
-}
-
-.slider-tick-btn {
-    background: rgba(255, 255, 255, 0.04);
-    border: 1px solid transparent;
-    color: var(--text-muted);
-    font-family: var(--font-mono);
-    font-size: 0.62rem;
-    font-weight: 600;
-    padding: 2px 6px;
-    border-radius: 3px;
-    cursor: pointer;
-    transition: all 0.15s ease;
-}
-
-.slider-tick-btn:hover {
-    color: var(--cyan-accent);
-    background: rgba(6, 182, 212, 0.15);
-    border-color: rgba(6, 182, 212, 0.3);
-}
-
-.slider-tick-btn.active {
-    color: var(--cyan-accent);
-    background: rgba(6, 182, 212, 0.25);
-    border-color: rgba(6, 182, 212, 0.6);
-    font-weight: 700;
-    box-shadow: 0 0 8px rgba(6, 182, 212, 0.4);
 }
 
 /* Mini Thumbnails Strip */

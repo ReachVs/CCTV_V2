@@ -483,11 +483,6 @@ class CCTVClient {
         const track = document.getElementById('dossier-slider-track');
         const thumbsContainer = document.getElementById('slider-thumbs');
         const rangeSlider = document.getElementById('dossier-range-slider');
-        const ticksContainer = document.getElementById('slider-range-ticks');
-        const barPrevBtn = document.getElementById('slider-bar-prev');
-        const barNextBtn = document.getElementById('slider-bar-next');
-        const zonePrevBtn = document.getElementById('slider-zone-prev');
-        const zoneNextBtn = document.getElementById('slider-zone-next');
         const viewport = document.getElementById('slider-viewport');
 
         if (!track) return;
@@ -519,24 +514,7 @@ class CCTVClient {
             };
         }
 
-        // 3. Populate Clickable Ticks / Labels
-        if (ticksContainer) {
-            ticksContainer.innerHTML = this.sliderImages.map((_, idx) => `
-                <button type="button" class="slider-tick-btn ${idx === 0 ? 'active' : ''}" data-index="${idx}" title="Jump to image ${idx + 1}">
-                    ${String(idx + 1).padStart(2, '0')}
-                </button>
-            `).join('');
-
-            ticksContainer.onclick = (e) => {
-                const btn = e.target.closest('.slider-tick-btn');
-                if (btn) {
-                    const idx = parseInt(btn.getAttribute('data-index'), 10);
-                    if (!isNaN(idx)) this.goToSlide(idx);
-                }
-            };
-        }
-
-        // 4. Populate Mini Thumbnails Strip
+        // 3. Populate Mini Thumbnails Strip
         if (thumbsContainer) {
             thumbsContainer.innerHTML = this.sliderImages.map((img, idx) => {
                 const label = this.formatAngleLabel(img.filename || '');
@@ -556,23 +534,14 @@ class CCTVClient {
             };
         }
 
-        // 5. Wire Navigation Buttons
-        const bindStep = (btn, delta) => {
-            if (btn) {
-                btn.onclick = (e) => {
-                    e.preventDefault();
-                    e.stopPropagation();
-                    this.goToSlide(this.currentSlideIndex + delta);
-                };
-            }
-        };
+        // 4. Click image to advance to next angle
+        if (viewport) {
+            viewport.onclick = () => {
+                this.goToSlide(this.currentSlideIndex + 1);
+            };
+        }
 
-        bindStep(barPrevBtn, -1);
-        bindStep(barNextBtn, 1);
-        bindStep(zonePrevBtn, -1);
-        bindStep(zoneNextBtn, 1);
-
-        // 6. Touch Swipe on Mobile/Tablet (non-interfering)
+        // 5. Touch Swipe on Mobile/Tablet
         if (viewport && !viewport._sliderTouchBound) {
             viewport._sliderTouchBound = true;
             let touchStartX = 0;
@@ -636,12 +605,6 @@ class CCTVClient {
             const pct = max > 0 ? (newIndex / max) * 100 : 0;
             rangeSlider.style.background = `linear-gradient(to right, var(--cyan-accent) 0%, var(--cyan-accent) ${pct}%, rgba(255, 255, 255, 0.12) ${pct}%, rgba(255, 255, 255, 0.12) 100%)`;
         }
-
-        // Ticks Buttons Highlight
-        const tickBtns = document.querySelectorAll('#slider-range-ticks .slider-tick-btn');
-        tickBtns.forEach((btn, idx) => {
-            btn.classList.toggle('active', idx === newIndex);
-        });
 
         // Update Thumbnails
         const thumbs = document.querySelectorAll('.slider-thumbs-strip .slider-thumb-item');

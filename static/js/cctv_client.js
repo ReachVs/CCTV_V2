@@ -257,8 +257,8 @@ class CCTVClient {
         }
 
         const now = performance.now();
-        // If user is hovering or interacting with cards, delay re-render by up to 1.5s
-        if (this._isHoveringTelemetry && this.lastTelemetryRenderTime && (now - this.lastTelemetryRenderTime < 1500)) {
+        // Suspend destructive DOM re-renders while user is hovering over telemetry cards to prevent flicker
+        if (this._isHoveringTelemetry) {
             return;
         }
         this._lastTrackSignature = signature;
@@ -292,7 +292,6 @@ class CCTVClient {
             const clickAttr = isConfirmed ? 'data-clickable="true"' : 'data-clickable="false"';
             const cursorStyle = isConfirmed ? 'cursor: pointer;' : 'cursor: default;';
             const clickHandler = isConfirmed ? `onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(trackId)}')"` : '';
-            const titleText = isConfirmed ? `title="Click to view Classified Intelligence Dossier for ${this.escapeHtml(name)}"` : '';
 
             return `
                 <div class="hud-telemetry-card ${badgeClass} ${clickableClass}" 
@@ -300,19 +299,15 @@ class CCTVClient {
                      data-subject-name="${this.escapeHtml(name)}"
                      ${clickAttr}
                      ${clickHandler}
-                     style="${cursorStyle}"
-                     ${titleText}>
+                     style="${cursorStyle}">
                     
-                    <!-- Tactical HUD Corner Brackets -->
-                    <div class="hud-corner top-left"></div>
-                    <div class="hud-corner top-right"></div>
-                    <div class="hud-corner bottom-left"></div>
-                    <div class="hud-corner bottom-right"></div>
-
                     <!-- Card Header -->
                     <div class="hud-card-top">
                         <span class="hud-card-prompt">TRACK #${encodeURIComponent(trackId)}</span>
-                        <span class="status-badge ${badgeClass}" style="font-size: 0.62rem;">${this.escapeHtml(statusText)}</span>
+                        <div style="display: flex; align-items: center; gap: 6px;">
+                            ${isConfirmed ? '<span class="hud-dossier-pill">DOSSIER ↗</span>' : ''}
+                            <span class="status-badge ${badgeClass}" style="font-size: 0.62rem;">${this.escapeHtml(statusText)}</span>
+                        </div>
                     </div>
 
                     <!-- Card Body -->

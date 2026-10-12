@@ -28,6 +28,7 @@ class CCTVClient {
         this.fpsCounter = 0;
         this.lastFpsTimestamp = performance.now();
         this.scanlinesEnabled = true;
+        this.lastTelemetryRenderTime = 0;
     }
 
     init() {
@@ -127,7 +128,11 @@ class CCTVClient {
                         }
                         if (data.active_tracks && Array.isArray(data.active_tracks)) {
                             if (this.tracksEl) this.tracksEl.textContent = data.active_tracks.length;
-                            this.renderTrackTelemetry(data.active_tracks);
+                            const now = performance.now();
+                            if (now - this.lastTelemetryRenderTime >= 350) {
+                                this.lastTelemetryRenderTime = now;
+                                this.renderTrackTelemetry(data.active_tracks);
+                            }
                         }
                         this.calculateFPS();
                     } catch (err) {
@@ -241,8 +246,23 @@ class CCTVClient {
                     NO SUBJECTS IN ACTIVE FIELD OF VIEW
                 </div>
             `;
+            this._lastTrackSignature = '';
             return;
         }
+
+        // Skip DOM thrashing if telemetry content is unchanged
+        const signature = tracks.map(t => `${t.track_id}:${t.name}:${t.match_distance}:${t.meta?.status}`).join('|');
+        if (this._lastTrackSignature === signature) {
+            return;
+        }
+
+        const now = Date.now();
+        // If user is hovering or interacting with cards, delay re-render by up to 1.5s
+        if (this._isHoveringTelemetry && this.lastTelemetryRenderTime && (now - this.lastTelemetryRenderTime < 1500)) {
+            return;
+        }
+        this._lastTrackSignature = signature;
+        this.lastTelemetryRenderTime = now;
 
         const html = tracks.map(t => {
             const name = t.name || 'Unknown';
@@ -272,7 +292,9 @@ class CCTVClient {
             return `
                 <div class="hud-telemetry-card ${badgeClass}" 
                      data-track-id="${encodeURIComponent(trackId)}"
-                     onclick="window.cctvClient.openDossierModal('${this.escapeHtml(name)}')"
+                     data-subject-name="${this.escapeHtml(name)}"
+                     onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(trackId)}')"
+                     style="cursor: pointer;"
                      title="Click to view Classified Intelligence Dossier">
                     
                     <!-- Tactical HUD Corner Brackets -->
@@ -351,7 +373,7 @@ class CCTVClient {
             const isAlert = action.includes('DENIED') || action.includes('UNKNOWN');
 
             return `
-                <div class="audit-item" style="cursor: pointer;" onclick="window.cctvClient.openDossierModal('${this.escapeHtml(name)}')">
+                <div class="audit-item" style="cursor: pointer;" onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(e.track_id || '')}')">
                     <div>
                         <div class="audit-title" style="color: ${isAlert ? 'var(--rose-threat)' : 'var(--text-primary)'};">
                             ${this.escapeHtml(name)} // ${this.escapeHtml(action)}
@@ -366,11 +388,11 @@ class CCTVClient {
         }).join('');
     }
 
-    async openDossierModal(name) {
-        if (!name || name === 'Unknown' || name === 'Scanning...') return;
-
+    async openDossierModal(name, trackId = null) {
         const modal = document.getElementById('dossier-modal');
         if (!modal) return;
+
+        const isUnverified = !name || name === 'Unknown' || name === 'Scanning...' || name === 'Unverified';
 
         // Reset fields to loading state
         const nameEl = document.getElementById('modal-fullname');
@@ -383,8 +405,42 @@ class CCTVClient {
         const galleryEl = document.getElementById('dossier-gallery');
         const notesEl = document.getElementById('modal-intel-notes');
 
+        if (isUnverified) {
+            const trackLabel = trackId ? `TRACK #${trackId}` : 'UNIDENTIFIED SUBJECT';
+            if (nameEl) nameEl.textContent = `${trackLabel} (UNVERIFIED)`;
+            if (accessEl) {
+                accessEl.textContent = 'RESTRICTED / PENDING IDENTIFICATION';
+                accessEl.className = 'd-val';
+                accessEl.style.color = 'var(--amber-warning)';
+            }
+            if (statusEl) statusEl.textContent = 'LIVE SCANNING / TRACKING IN PROGRESS';
+            if (occEl) occEl.textContent = 'UNENROLLED CANDIDATE';
+            if (phoneEl) phoneEl.textContent = 'N/A';
+            if (addressEl) addressEl.textContent = 'SURVEILLANCE FIELD OF VIEW';
+            if (dobEl) dobEl.textContent = 'N/A';
+            if (notesEl) {
+                notesEl.textContent = 'Target is actively tracked by spatial pose detection and ByteTrack. Biometric consensus has not yet reached the verification threshold against enrolled profiles. Click "Enroll Subject" in the navigation bar to register this individual into the biometric repository.';
+            }
+            if (galleryEl) {
+                galleryEl.innerHTML = `
+                    <div class="dossier-thumb" style="display: flex; flex-direction: column; align-items: center; justify-content: center; background: rgba(255,255,255,0.03); border: 1px dashed var(--border-medium); padding: 16px; border-radius: var(--radius-sm); text-align: center; width: 100%; height: 100%;">
+                        <img src="/logo.png" alt="Unverified" style="width: 48px; height: 48px; opacity: 0.6; margin-bottom: 8px;">
+                        <span style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono);">NO ENROLLED RECORD</span>
+                        <button type="button" class="btn-primary-action" onclick="window.cctvClient && window.cctvClient.closeDossierModal(); window.appDrawer && window.appDrawer.openDrawer();" style="margin-top: 10px; font-size: 0.7rem; padding: 6px 12px; width: auto;">ENROLL SUBJECT</button>
+                    </div>
+                `;
+            }
+            modal.classList.add('active');
+            return;
+        }
+
+        // For verified / known subject
         if (nameEl) nameEl.textContent = name;
-        if (accessEl) accessEl.textContent = 'QUERYING BIOMETRIC REPOSITORY...';
+        if (accessEl) {
+            accessEl.textContent = 'QUERYING BIOMETRIC REPOSITORY...';
+            accessEl.className = 'd-val access-granted';
+            accessEl.style.color = '';
+        }
         if (galleryEl) {
             galleryEl.innerHTML = `
                 <div class="dossier-thumb">
@@ -401,7 +457,11 @@ class CCTVClient {
                 const data = await res.json();
                 const meta = data.meta || data;
                 if (nameEl) nameEl.textContent = data.name || meta.name || name;
-                if (accessEl) accessEl.textContent = meta.clearance || data.clearance || 'LEVEL 1 GRANTED';
+                if (accessEl) {
+                    accessEl.textContent = meta.clearance || data.clearance || 'LEVEL 1 GRANTED';
+                    accessEl.className = 'd-val access-granted';
+                    accessEl.style.color = '';
+                }
                 if (statusEl) statusEl.textContent = 'ACTIVE BIOMETRIC INDEX';
                 if (occEl) occEl.textContent = meta.occupation || data.occupation || 'REGISTERED PERSONNEL';
                 if (phoneEl) phoneEl.textContent = meta.phone || data.phone || 'N/A';
@@ -415,7 +475,7 @@ class CCTVClient {
                 if (galleryEl && data.images && Array.isArray(data.images) && data.images.length > 0) {
                     galleryEl.innerHTML = data.images.map(img => `
                         <div class="dossier-thumb">
-                            <img src="${this.escapeHtml(img.url)}" alt="${this.escapeHtml(img.filename)}">
+                            <img src="${this.escapeHtml(img.url)}" alt="${this.escapeHtml(img.filename)}" onerror="this.src='/logo.png'">
                         </div>
                     `).join('');
                 }
@@ -492,6 +552,20 @@ class CCTVClient {
             dossierModal.addEventListener('click', (e) => {
                 if (e.target === dossierModal) this.closeDossierModal();
             });
+        }
+
+        // Delegated click listener on telemetry cards container
+        if (this.telemetryContainer) {
+            this.telemetryContainer.addEventListener('click', (e) => {
+                const card = e.target.closest('.hud-telemetry-card');
+                if (card) {
+                    const subjectName = card.getAttribute('data-subject-name') || '';
+                    const trackId = card.getAttribute('data-track-id') || '';
+                    this.openDossierModal(subjectName, trackId);
+                }
+            });
+            this.telemetryContainer.addEventListener('mouseenter', () => { this._isHoveringTelemetry = true; });
+            this.telemetryContainer.addEventListener('mouseleave', () => { this._isHoveringTelemetry = false; });
         }
 
         // ESC key to close modal or drawer

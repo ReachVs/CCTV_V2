@@ -478,12 +478,16 @@ class CCTVClient {
     setupDossierSlider(images) {
         this.sliderImages = (images && images.length > 0) ? images : [{ url: '/logo.png', filename: 'Profile.jpg' }];
         this.currentSlideIndex = 0;
+        const total = this.sliderImages.length;
 
         const track = document.getElementById('dossier-slider-track');
-        const dotsContainer = document.getElementById('slider-dots');
         const thumbsContainer = document.getElementById('slider-thumbs');
-        const prevBtn = document.getElementById('slider-prev-btn');
-        const nextBtn = document.getElementById('slider-next-btn');
+        const rangeSlider = document.getElementById('dossier-range-slider');
+        const ticksContainer = document.getElementById('slider-range-ticks');
+        const barPrevBtn = document.getElementById('slider-bar-prev');
+        const barNextBtn = document.getElementById('slider-bar-next');
+        const zonePrevBtn = document.getElementById('slider-zone-prev');
+        const zoneNextBtn = document.getElementById('slider-zone-next');
         const viewport = document.getElementById('slider-viewport');
 
         if (!track) return;
@@ -498,22 +502,41 @@ class CCTVClient {
             `;
         }).join('');
 
-        // 2. Populate Pagination Dots
-        if (dotsContainer) {
-            dotsContainer.innerHTML = this.sliderImages.map((_, idx) => `
-                <button type="button" class="slider-dot ${idx === 0 ? 'active' : ''}" data-index="${idx}" aria-label="Slide ${idx + 1}"></button>
+        // 2. Configure Scrubber Range Slider (<input type="range">)
+        if (rangeSlider) {
+            rangeSlider.min = '0';
+            rangeSlider.max = String(Math.max(0, total - 1));
+            rangeSlider.value = '0';
+            rangeSlider.step = '1';
+
+            rangeSlider.oninput = (e) => {
+                const idx = parseInt(e.target.value, 10);
+                if (!isNaN(idx)) this.goToSlide(idx);
+            };
+            rangeSlider.onchange = (e) => {
+                const idx = parseInt(e.target.value, 10);
+                if (!isNaN(idx)) this.goToSlide(idx);
+            };
+        }
+
+        // 3. Populate Clickable Ticks / Labels
+        if (ticksContainer) {
+            ticksContainer.innerHTML = this.sliderImages.map((_, idx) => `
+                <button type="button" class="slider-tick-btn ${idx === 0 ? 'active' : ''}" data-index="${idx}" title="Jump to image ${idx + 1}">
+                    ${String(idx + 1).padStart(2, '0')}
+                </button>
             `).join('');
 
-            dotsContainer.onclick = (e) => {
-                const dot = e.target.closest('.slider-dot');
-                if (dot) {
-                    const idx = parseInt(dot.getAttribute('data-index'), 10);
+            ticksContainer.onclick = (e) => {
+                const btn = e.target.closest('.slider-tick-btn');
+                if (btn) {
+                    const idx = parseInt(btn.getAttribute('data-index'), 10);
                     if (!isNaN(idx)) this.goToSlide(idx);
                 }
             };
         }
 
-        // 3. Populate Mini Thumbnails Strip
+        // 4. Populate Mini Thumbnails Strip
         if (thumbsContainer) {
             thumbsContainer.innerHTML = this.sliderImages.map((img, idx) => {
                 const label = this.formatAngleLabel(img.filename || '');
@@ -533,66 +556,46 @@ class CCTVClient {
             };
         }
 
-        // 4. Arrow Navigation
-        if (prevBtn) {
-            prevBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.goToSlide(this.currentSlideIndex - 1);
-            };
-        }
-        if (nextBtn) {
-            nextBtn.onclick = (e) => {
-                e.stopPropagation();
-                this.goToSlide(this.currentSlideIndex + 1);
-            };
-        }
+        // 5. Wire Navigation Buttons
+        const bindStep = (btn, delta) => {
+            if (btn) {
+                btn.onclick = (e) => {
+                    e.preventDefault();
+                    e.stopPropagation();
+                    this.goToSlide(this.currentSlideIndex + delta);
+                };
+            }
+        };
 
-        // 5. Swipe and Drag Support
-        if (viewport && !viewport._sliderSwipeBound) {
-            viewport._sliderSwipeBound = true;
-            let startX = 0;
-            let currentX = 0;
-            let isDragging = false;
+        bindStep(barPrevBtn, -1);
+        bindStep(barNextBtn, 1);
+        bindStep(zonePrevBtn, -1);
+        bindStep(zoneNextBtn, 1);
 
-            const onStart = (clientX) => {
-                isDragging = true;
-                startX = clientX;
-                currentX = clientX;
-            };
+        // 6. Touch Swipe on Mobile/Tablet (non-interfering)
+        if (viewport && !viewport._sliderTouchBound) {
+            viewport._sliderTouchBound = true;
+            let touchStartX = 0;
+            let touchEndX = 0;
 
-            const onMove = (clientX) => {
-                if (!isDragging) return;
-                currentX = clientX;
-            };
-
-            const onEnd = () => {
-                if (!isDragging) return;
-                isDragging = false;
-                const diff = currentX - startX;
-                const threshold = 40;
-                if (diff < -threshold) {
-                    this.goToSlide(this.currentSlideIndex + 1);
-                } else if (diff > threshold) {
-                    this.goToSlide(this.currentSlideIndex - 1);
-                }
-            };
-
-            // Touch listeners
             viewport.addEventListener('touchstart', (e) => {
-                if (e.touches && e.touches.length === 1) onStart(e.touches[0].clientX);
+                if (e.touches && e.touches.length === 1) {
+                    touchStartX = e.touches[0].clientX;
+                    touchEndX = e.touches[0].clientX;
+                }
             }, { passive: true });
 
             viewport.addEventListener('touchmove', (e) => {
-                if (e.touches && e.touches.length === 1) onMove(e.touches[0].clientX);
+                if (e.touches && e.touches.length === 1) {
+                    touchEndX = e.touches[0].clientX;
+                }
             }, { passive: true });
 
-            viewport.addEventListener('touchend', () => onEnd(), { passive: true });
-
-            // Pointer / Mouse drag listeners
-            viewport.addEventListener('pointerdown', (e) => onStart(e.clientX));
-            viewport.addEventListener('pointermove', (e) => onMove(e.clientX));
-            viewport.addEventListener('pointerup', () => onEnd());
-            viewport.addEventListener('pointercancel', () => onEnd());
+            viewport.addEventListener('touchend', () => {
+                const diff = touchEndX - touchStartX;
+                if (diff < -40) this.goToSlide(this.currentSlideIndex + 1);
+                else if (diff > 40) this.goToSlide(this.currentSlideIndex - 1);
+            }, { passive: true });
         }
 
         this.goToSlide(0);
@@ -625,10 +628,19 @@ class CCTVClient {
             angleEl.textContent = this.formatAngleLabel(this.sliderImages[newIndex].filename || '');
         }
 
-        // Update Dots
-        const dots = document.querySelectorAll('.slider-pagination-dots .slider-dot');
-        dots.forEach((dot, idx) => {
-            dot.classList.toggle('active', idx === newIndex);
+        // Range Slider Scrubber Position & Illuminated Progress Track
+        const rangeSlider = document.getElementById('dossier-range-slider');
+        if (rangeSlider) {
+            rangeSlider.value = String(newIndex);
+            const max = parseInt(rangeSlider.max, 10) || 1;
+            const pct = max > 0 ? (newIndex / max) * 100 : 0;
+            rangeSlider.style.background = `linear-gradient(to right, var(--cyan-accent) 0%, var(--cyan-accent) ${pct}%, rgba(255, 255, 255, 0.12) ${pct}%, rgba(255, 255, 255, 0.12) 100%)`;
+        }
+
+        // Ticks Buttons Highlight
+        const tickBtns = document.querySelectorAll('#slider-range-ticks .slider-tick-btn');
+        tickBtns.forEach((btn, idx) => {
+            btn.classList.toggle('active', idx === newIndex);
         });
 
         // Update Thumbnails

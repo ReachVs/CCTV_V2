@@ -86,11 +86,20 @@ class CyberpunkHUDAnnotator(Annotator):
     COLOR_KEYPOINT = (0, 255, 255)      # Yellow
     COLOR_HEADER_BG = (15, 23, 42)      # Dark Slate (RGB: 42, 23, 15)
 
-    def __init__(self, font_scale: float = 0.5, thickness: int = 2, show_telemetry_bar: bool = False):
+    def __init__(
+        self,
+        font_scale: float = 0.5,
+        thickness: int = 2,
+        show_telemetry_bar: bool = False,
+        draw_labels: bool = False,
+        draw_effects: bool = False,
+    ):
         self.font = cv2.FONT_HERSHEY_SIMPLEX
         self.font_scale = font_scale
         self.box_thickness = thickness
         self.show_telemetry_bar = show_telemetry_bar
+        self.draw_labels = draw_labels
+        self.draw_effects = draw_effects
 
     def _draw_corner_brackets(self, frame: np.ndarray, x1: int, y1: int, x2: int, y2: int, color: Tuple[int, int, int]):
         """Draws tactical corner accents around target bounding box."""
@@ -124,7 +133,7 @@ class CyberpunkHUDAnnotator(Annotator):
         h_frame, w_frame = frame.shape[:2]
 
         # 1. Top Tactical Telemetry HUD Bar
-        if self.show_telemetry_bar and (fps is not None or len(subjects) > 0):
+        if self.draw_effects and self.show_telemetry_bar and (fps is not None or len(subjects) > 0):
             header_text = f"SEC-NET ONLINE"
             if fps is not None:
                 header_text += f" | FPS: {fps:.1f}"
@@ -156,15 +165,17 @@ class CyberpunkHUDAnnotator(Annotator):
             # A. Pose Target Branch (17-KPT pose skeleton)
             if is_pose:
                 cv2.rectangle(frame, (x1, y1), (x2, y2), self.COLOR_POSE, self.box_thickness)
-                self._draw_corner_brackets(frame, x1, y1, x2, y2, self.COLOR_POSE)
+                if self.draw_effects:
+                    self._draw_corner_brackets(frame, x1, y1, x2, y2, self.COLOR_POSE)
                 if kpts:
                     for kp in kpts:
                         cv2.circle(frame, (int(kp["x"]), int(kp["y"])), 3, self.COLOR_KEYPOINT, -1)
-                pose_label = f"POSE ID {track_id} (17-KPT)"
-                cv2.putText(
-                    frame, pose_label, (x1 + 5, max(15, y1 - 8)),
-                    self.font, self.font_scale, self.COLOR_POSE, 1, cv2.LINE_AA
-                )
+                if self.draw_labels:
+                    pose_label = f"POSE ID {track_id} (17-KPT)"
+                    cv2.putText(
+                        frame, pose_label, (x1 + 5, max(15, y1 - 8)),
+                        self.font, self.font_scale, self.COLOR_POSE, 1, cv2.LINE_AA
+                    )
                 continue
 
             # B. Standard Biometric & Subject Tracking Branch
@@ -184,19 +195,23 @@ class CyberpunkHUDAnnotator(Annotator):
                 color = self.COLOR_UNKNOWN
                 label_str = f"ID {track_id}: Unknown Person"
 
-            # Draw target bounding box and tactical corner brackets
+            # Draw clean target bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, self.box_thickness)
-            self._draw_corner_brackets(frame, x1, y1, x2, y2, color)
 
-            # Draw label banner & text
-            banner_w = len(label_str) * 11
-            banner_y1 = max(0, y1 - 25)
-            banner_y2 = max(25, y1)
-            cv2.rectangle(frame, (x1, banner_y1), (x1 + banner_w, banner_y2), color, -1)
-            cv2.putText(
-                frame, label_str, (x1 + 5, banner_y2 - 7),
-                self.font, self.font_scale, (0, 0, 0), 1, cv2.LINE_AA
-            )
+            # Optional corner brackets effect
+            if self.draw_effects:
+                self._draw_corner_brackets(frame, x1, y1, x2, y2, color)
+
+            # Optional label banner & text
+            if self.draw_labels:
+                banner_w = len(label_str) * 11
+                banner_y1 = max(0, y1 - 25)
+                banner_y2 = max(25, y1)
+                cv2.rectangle(frame, (x1, banner_y1), (x1 + banner_w, banner_y2), color, -1)
+                cv2.putText(
+                    frame, label_str, (x1 + 5, banner_y2 - 7),
+                    self.font, self.font_scale, (0, 0, 0), 1, cv2.LINE_AA
+                )
 
         return frame
 

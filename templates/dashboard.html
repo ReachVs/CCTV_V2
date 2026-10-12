@@ -11,31 +11,6 @@
         <!-- Precision Viewport Frame -->
         <div class="viewport-frame" id="viewport-container">
             <img id="video-feed" class="video-stream-img" src="/video_feed" alt="Real-time CCTV Biometric Video Stream">
-            
-            <!-- Tactical CRT Scanlines Layer (Toggled via HUD Controls) -->
-            <div class="scanlines-overlay" id="scanlines-layer"></div>
-
-            <!-- Tactical HUD Overlay -->
-            <div class="viewport-hud-overlay">
-                <div class="hud-row-top">
-                    <div class="hud-badge">
-                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-accent)" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 2a14.5 14.5 0 0 0 0 20 14.5 14.5 0 0 0 0-20"/><path d="M2 12h20"/></svg>
-                        CAM-01 // PRIMARY SECTOR
-                    </div>
-                    <div class="hud-badge rec-indicator">
-                        LIVE ENCRYPTED FEED
-                    </div>
-                </div>
-
-                <div class="hud-row-bottom">
-                    <div class="hud-badge" id="resolution-chip">
-                        1080p AI MULTI-EXEMPLAR ARCFACE
-                    </div>
-                    <div class="hud-badge" id="mode-chip">
-                        MODE: WEBSOCKET LOW LATENCY
-                    </div>
-                </div>
-            </div>
         </div>
 
         <!-- Viewport Controls Toolbar -->
@@ -48,10 +23,6 @@
                 <button type="button" class="tool-btn" id="btn-fullscreen" title="Toggle Fullscreen Video Mode">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M8 3H5a2 2 0 0 0-2 2v3m18 0V5a2 2 0 0 0-2-2h-3m0 18h3a2 2 0 0 0 2-2v-3M3 16v3a2 2 0 0 0 2 2h3"/></svg>
                     Fullscreen
-                </button>
-                <button type="button" class="tool-btn active" id="btn-scanlines" title="Toggle CRT HUD Scanlines">
-                    <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><line x1="3" y1="6" x2="21" y2="6"/><line x1="3" y1="12" x2="21" y2="12"/><line x1="3" y1="18" x2="21" y2="18"/></svg>
-                    Scanlines
                 </button>
                 <button type="button" class="tool-btn active" id="btn-audio-toggle" title="Toggle Audio Verification Chimes">
                     <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><polygon points="11 5 6 9 2 9 2 15 6 15 11 19 11 5"/><path d="M19.07 4.93a10 10 0 0 1 0 14.14M15.54 8.46a5 5 0 0 1 0 7.07"/></svg>

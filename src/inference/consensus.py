@@ -187,7 +187,12 @@ class IdentityConsensus:
                     and (current_frame - claimant_seen <= 15)
                 )
                 if is_claimant_live:
-                    matched_name = "Ambiguous Match"
+                    # If this is a track handoff or existing claimant hasn't been seen in >= 2 frames,
+                    # transfer the identity claim cleanly.
+                    if candidate.dist1 <= 0.35 and (current_frame - claimant_seen >= 2 or (active_track_ids and existing_claimant not in active_track_ids)):
+                        self.active_identity_claims[matched_name] = track_id
+                    else:
+                        matched_name = "Ambiguous Match"
                 else:
                     self.active_identity_claims[matched_name] = track_id
             else:
@@ -235,16 +240,18 @@ class IdentityConsensus:
                         )
 
         # 8. Check for Unknown Person transition:
-        # Categorize as Unknown Person ONLY if unmatched valid crops reach threshold without any match,
-        # AND there are NO valid known-identity votes in history!
-        is_unmatched_crop = matched_name in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person", ""]
+        # Categorize as Unknown Person ONLY if unmatched valid crops reach min_unknown_crops
+        # with genuine non-matching biometric distance (dist1 >= 0.85), AND there are NO valid known-identity votes in history!
+        is_genuine_stranger = (
+            matched_name in ["Unknown", "Unknown Person"]
+            and getattr(candidate, "dist1", 0.0) >= 0.85
+        )
         has_known_votes = any(
             item.get("name") not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person", ""]
             for item in history
         )
         if not session.is_confirmed and not has_known_votes and (
-            (is_unmatched_crop and session.valid_face_crops >= self.min_unknown_crops)
-            or session.attempts >= self.max_scanning_attempts
+            is_genuine_stranger and session.valid_face_crops >= self.min_unknown_crops
         ):
             session.mark_unknown()
             return ConsensusDecision(
@@ -253,6 +260,17 @@ class IdentityConsensus:
                 is_confirmed=True,
                 confidence=0.50,
                 telemetry={"valid_face_crops": session.valid_face_crops, "confirmed": True}
+            )
+        elif not session.is_confirmed and session.attempts >= self.max_scanning_attempts:
+            # Motion blur or temporary scanning timeout: fall back to unverified scanning,
+            # NEVER declare Access Denied / Unknown Person.
+            session.mark_unverified()
+            return ConsensusDecision(
+                display_name=session.display_name,
+                status=session.status,
+                is_confirmed=False,
+                confidence=0.50,
+                telemetry={"timed_out": True, "attempts": session.attempts}
             )
 
         # Return scanning state

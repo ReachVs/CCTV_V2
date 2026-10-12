@@ -238,7 +238,13 @@ class TrackingPreFilter:
             for acc_id, acc_box in current_frame_boxes.items():
                 iou = compute_box_iou(cbox, acc_box)
                 containment = compute_box_containment(cbox, acc_box)
-                if iou > 0.35 or containment > 0.40:
+                if iou > 0.30 or containment > 0.35:
+                    if acc_id in confirmed_track_ids and not c_confirmed:
+                        # Secondary/limb box overlapping confirmed person body:
+                        # If it lacks distinct head/shoulder presence or is heavily contained, suppress it
+                        if not self.has_head_or_shoulder_presence(frame, cbox, cid, current_frame_num) or containment > 0.35:
+                            suppressed = True
+                            break
                     is_established_cid = c_confirmed or (cid in active_track_ids)
                     is_established_acc = (acc_id in active_track_ids) or (acc_id in confirmed_track_ids)
                     if is_established_cid and is_established_acc and iou <= 0.65:
@@ -254,7 +260,10 @@ class TrackingPreFilter:
                         if (current_frame_num - hist_info.get("last_seen", 0)) <= 15:
                             iou = compute_box_iou(cbox, hist_info["box"])
                             containment = compute_box_containment(cbox, hist_info["box"])
-                            if iou > 0.35 or containment > 0.40:
+                            if iou > 0.30 or containment > 0.35:
+                                if not self.has_head_or_shoulder_presence(frame, cbox, cid, current_frame_num) or containment > 0.35:
+                                    suppressed = True
+                                    break
                                 if (cid in active_track_ids) and iou <= 0.65:
                                     pass
                                 else:
@@ -297,7 +306,7 @@ class TrackingPreFilter:
 
                     if max_iou < 0.15 and max_cont < 0.20:
                         self.contended_tracks[c_tid] += 1
-                        if self.contended_tracks[c_tid] >= 3:
+                        if self.contended_tracks[c_tid] >= 2:
                             del self.contended_tracks[c_tid]
                             resolved_contended.append(c_tid)
                     else:
@@ -307,21 +316,48 @@ class TrackingPreFilter:
 
             # Detect New Pairwise Contention
             box_items = list(current_frame_boxes.items())
+            limb_suppressed_tids = set()
             for i in range(len(box_items)):
                 tid1, b1 = box_items[i]
+                if tid1 in limb_suppressed_tids:
+                    continue
                 for j in range(i + 1, len(box_items)):
                     tid2, b2 = box_items[j]
+                    if tid2 in limb_suppressed_tids:
+                        continue
                     iou_pair = compute_box_iou(b1, b2)
                     cont_pair = compute_box_containment(b1, b2)
                     if iou_pair > 0.30 or cont_pair > 0.40:
+                        # Check if one is a confirmed person and the other is an unconfirmed limb/sub-box
+                        t1_conf = tid1 in confirmed_track_ids
+                        t2_conf = tid2 in confirmed_track_ids
+                        if t1_conf and not t2_conf:
+                            if not self.has_head_or_shoulder_presence(frame, b2, tid2, current_frame_num) or cont_pair > 0.40:
+                                limb_suppressed_tids.add(tid2)
+                                suppressed_track_ids.append(tid2)
+                                self.purge_track(tid2)
+                                continue
+                        elif t2_conf and not t1_conf:
+                            if not self.has_head_or_shoulder_presence(frame, b1, tid1, current_frame_num) or cont_pair > 0.40:
+                                limb_suppressed_tids.add(tid1)
+                                suppressed_track_ids.append(tid1)
+                                self.purge_track(tid1)
+                                break
+
+                        # Genuine contention between two distinct person tracks
                         for tid in (tid1, tid2):
                             self.contended_tracks[tid] = 0
-                            self.contention_blacklist[tid] = current_frame_num + 45
+                            self.contention_blacklist[tid] = current_frame_num + 10
                             if tid not in newly_contended:
                                 newly_contended.append(tid)
 
                         if tid1 not in prev_contended or tid2 not in prev_contended:
                             newly_contended_pairs.append((tid1, tid2, float(iou_pair)))
+
+            # Clean up any limb boxes suppressed during pairwise arbitration
+            for stid in limb_suppressed_tids:
+                current_frame_boxes.pop(stid, None)
+            accepted_candidates = [c for c in accepted_candidates if c.track_id not in limb_suppressed_tids]
 
         return PreFilterResult(
             candidates=accepted_candidates,

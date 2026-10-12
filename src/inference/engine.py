@@ -615,16 +615,20 @@ class BiometricTrackingEngine:
             for r_tid in pre_filter_res.resolved_contended_track_ids:
                 if r_tid in self._sessions:
                     self._sessions[r_tid].reset_contention()
-                self.active_tracks[r_tid] = f"Scanning Track {r_tid}"
                 t_c = self.track_cache.setdefault(r_tid, {})
-                t_c["name"] = f"Scanning Track {r_tid}"
-                t_c["is_confirmed"] = False
+                if not t_c.get("is_confirmed", False):
+                    self.active_tracks[r_tid] = f"Scanning Track {r_tid}"
+                    t_c["name"] = f"Scanning Track {r_tid}"
+                    t_c["is_confirmed"] = False
 
             # Handle newly contended tracks & audit events
             for tid in pre_filter_res.newly_contended_track_ids:
                 session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
-                session.enter_contention(blacklist_expiration_frame=current_frame_num + 45)
                 t_cache = self.track_cache.setdefault(tid, {})
+                if t_cache.get("is_confirmed", False) or session.is_confirmed:
+                    # Strong Identity Persistence: Confirmed track retains identity lock
+                    continue
+                session.enter_contention(blacklist_expiration_frame=current_frame_num + 10)
                 t_cache["is_confirmed"] = False
                 t_cache["history"] = []
                 self.active_tracks[tid] = f"Contended Track {tid}"
@@ -680,9 +684,6 @@ class BiometricTrackingEngine:
                     inherited_name = None
                     for old_tid, old_info in list(self.recent_track_history.items()):
                         if current_frame_num - old_info["last_seen"] <= 45 and old_info.get("confirmed", False):
-                            # Skip candidates blacklisted due to recent crossover contention
-                            if old_tid in self.contention_blacklist and current_frame_num <= self.contention_blacklist[old_tid]:
-                                continue
                             name_cand = old_info.get("name", "")
                             if name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"] and not name_cand.startswith("Scanning") and not name_cand.startswith("Contended"):
                                 iou_val = compute_box_iou(curr_box, old_info["box"])
@@ -694,9 +695,12 @@ class BiometricTrackingEngine:
                         self.active_tracks[track_id] = inherited_name
                         t_c = self.track_cache.setdefault(track_id, {})
                         t_c["name"] = inherited_name
-                        t_c["is_confirmed"] = False
-                        t_c["best_dist"] = 0.50
+                        t_c["is_confirmed"] = True
+                        t_c["best_dist"] = 0.35
                         t_c["best_norm"] = 1.0
+                        session = self._get_or_create_session(track_id, curr_box, current_frame_num)
+                        session.confirm_identity(inherited_name, distance=0.35, norm=1.0)
+                        self.consensus.active_identity_claims[inherited_name] = track_id
                     else:
                         self.active_tracks[track_id] = f"Scanning Track {track_id}"
 
@@ -728,8 +732,7 @@ class BiometricTrackingEngine:
                 continue
 
             is_contended_flag = (track_id in self.contended_tracks)
-            if is_contended_flag:
-                is_confirmed = False
+            if is_contended_flag and not is_confirmed:
                 subject_name = f"Contended Track {track_id}"
 
             is_scanning = subject_name.startswith("Scanning") or (subject_name.startswith("Contended") and not is_contended_flag)

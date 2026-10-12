@@ -306,7 +306,7 @@ class TrackingPreFilter:
 
                     if max_iou < 0.15 and max_cont < 0.20:
                         self.contended_tracks[c_tid] += 1
-                        if self.contended_tracks[c_tid] >= 2:
+                        if self.contended_tracks[c_tid] >= 3:
                             del self.contended_tracks[c_tid]
                             resolved_contended.append(c_tid)
                     else:

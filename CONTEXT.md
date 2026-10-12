@@ -69,3 +69,10 @@ The authoritative 7-pose template registration standard (`enroll_webcam.py`):
 
 Enforces real-time YuNet 5-point landmark verification and automatically triggers FAISS vector index rebuilding and SQLite profile synchronization upon completion.
 
+### BiometricMatcher
+The deep vector matching and distance arbitration seam (`BiometricMatcher` in `src.inference.biometric_matcher`). Encapsulates similarity search against `VectorIndexAdapter`, enforces pose-aware $L_2$ distance thresholds (<0.30 side-profile vs <0.68 frontal), computes nearest distinct-subject margins, and gates ambiguous matches ($\Delta < 0.15$), decoupling raw vector mathematics from `BiometricTrackingEngine`.
+
+### EmbeddingBatchWorker
+The background queue and execution worker seam (`EmbeddingBatchWorker` in `src.inference.embedding_worker`). Decouples asynchronous face crop queue management, track deduplication, GPU/CPU batch inference, and thread lifecycles from the real-time tracking engine, ensuring sub-millisecond frame processing latency.
+
+

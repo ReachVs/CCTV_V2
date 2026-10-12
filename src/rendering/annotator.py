@@ -154,12 +154,18 @@ class CyberpunkHUDAnnotator(Annotator):
             x1, y1, x2, y2 = box
             track_id = getattr(s, "track_id", 0)
             name = getattr(s, "name", "")
-            status = getattr(s, "status", None)
-            is_contended = getattr(s, "is_contended", False) or (status == TrackStatus.CONTENDED if TrackStatus else False)
-            is_scanning = getattr(s, "is_scanning", False) or (status == TrackStatus.SCANNING if TrackStatus else False)
-            is_unknown = getattr(s, "is_unknown", False) or (status == TrackStatus.UNKNOWN if TrackStatus else False)
-            is_unverified = (status == TrackStatus.UNVERIFIED if TrackStatus else False) or name.startswith("Unverified")
-            is_pose = (status == TrackStatus.POSE_TARGET if TrackStatus else False) or name.startswith("Pose Target")
+            raw_status = getattr(s, "status", None)
+            status = None
+            if isinstance(raw_status, TrackStatus):
+                status = raw_status
+            elif isinstance(raw_status, str) and hasattr(TrackStatus, raw_status):
+                status = TrackStatus[raw_status]
+
+            is_pose = (status == TrackStatus.POSE_TARGET) or name.startswith("Pose Target")
+            is_contended = (status == TrackStatus.CONTENDED) or getattr(s, "is_contended", False)
+            is_scanning = (status == TrackStatus.SCANNING) or getattr(s, "is_scanning", False)
+            is_unverified = (status == TrackStatus.UNVERIFIED) or (name.startswith("Unverified") if not status else False)
+            is_unknown = (status == TrackStatus.UNKNOWN) or getattr(s, "is_unknown", False) or name in ["Unknown", "Unknown Person"]
             kpts = getattr(s, "keypoints", None)
 
             # A. Pose Target Branch (17-KPT pose skeleton)

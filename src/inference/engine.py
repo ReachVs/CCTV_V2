@@ -51,6 +51,8 @@ from src.inference.consensus import (
     MatchCandidate,
     ConsensusDecision
 )
+from src.inference.biometric_matcher import BiometricMatcher
+from src.inference.embedding_worker import EmbeddingBatchWorker
 from src.inference.person_detector import (
     PersonDetector,
     UltralyticsPersonDetector,
@@ -196,11 +198,19 @@ class BiometricTrackingEngine:
         self.db_path = db_path or os.path.join(data_dir, "faces.db")
 
         # Vector Index Setup
-        self.metadata: Dict[str, Any] = {}
+        self._metadata: Dict[str, Any] = {}
         if index_adapter is not None:
-            self.index_adapter = index_adapter
+            self._index_adapter = index_adapter
         else:
-            self.index_adapter = self._load_default_index()
+            self._index_adapter = self._load_default_index()
+
+        # Encapsulated Biometric Vector Matcher
+        self.matcher = BiometricMatcher(
+            index_adapter=self._index_adapter,
+            metadata=self._metadata,
+            l2_threshold=self.l2_threshold,
+            margin_threshold=self.margin_threshold,
+        )
 
         # Encapsulated Models & Pipelines
         self.bytetrack_cfg = os.path.join(PROJECT_ROOT, "bytetrack.yaml")
@@ -249,13 +259,44 @@ class BiometricTrackingEngine:
             temporal_subsampler=self.temporal_subsampler,
         )
 
-        # Batch Face Embedder Setup
-        self._embedder_queue: List[Dict[str, Any]] = []
-        self._embedder_lock = threading.RLock()
-        self._embedder_running = True
+        # Batch Face Embedder Setup (Delegated to EmbeddingBatchWorker)
+        self.embedding_worker = EmbeddingBatchWorker(
+            embedder_getter=lambda: self.embedder,
+            on_result=self._handle_embedding_result,
+            max_queue_size=16,
+        )
 
-        self._embedder_thread = threading.Thread(target=self._embedder_worker, daemon=True)
-        self._embedder_thread.start()
+    @property
+    def metadata(self) -> Dict[str, Any]:
+        return getattr(self, "_metadata", {})
+
+    @metadata.setter
+    def metadata(self, val: Dict[str, Any]) -> None:
+        self._metadata = val
+        if hasattr(self, "matcher") and self.matcher is not None:
+            self.matcher.metadata = val
+
+    @property
+    def index_adapter(self) -> VectorIndexAdapter:
+        return getattr(self, "_index_adapter", None)
+
+    @index_adapter.setter
+    def index_adapter(self, val: VectorIndexAdapter) -> None:
+        self._index_adapter = val
+        if hasattr(self, "matcher") and self.matcher is not None:
+            self.matcher.index_adapter = val
+
+    @property
+    def _embedder_queue(self) -> List[Dict[str, Any]]:
+        return self.embedding_worker.queue
+
+    @_embedder_queue.setter
+    def _embedder_queue(self, val: List[Dict[str, Any]]) -> None:
+        self.embedding_worker.queue = val
+
+    @property
+    def _embedder_lock(self) -> threading.RLock:
+        return self.embedding_worker.lock
 
     @property
     def active_identity_claims(self) -> Dict[str, int]:
@@ -506,13 +547,8 @@ class BiometricTrackingEngine:
     def reset_state(self) -> None:
         """Flushes all active tracking sessions, track caches, and consensus histories."""
         with self.lock:
-            self.active_tracks.clear()
-            self._sessions.clear()
-            self.track_last_seen.clear()
-            self.track_first_seen.clear()
-            self.track_keypoints.clear()
+            self.registry.clear()
             self.identified_cooldowns.clear()
-            self.track_cache.clear()
             if hasattr(self, "consensus") and hasattr(self.consensus, "reset"):
                 self.consensus.reset()
             if hasattr(self, "jitter_engine") and hasattr(self.jitter_engine, "track_positions"):
@@ -633,9 +669,6 @@ class BiometricTrackingEngine:
             for tid in pre_filter_res.newly_contended_track_ids:
                 session = self._get_or_create_session(tid, current_frame_boxes[tid], current_frame_num)
                 t_cache = self.track_cache.setdefault(tid, {})
-                if t_cache.get("is_confirmed", False) or session.is_confirmed:
-                    # Strong Identity Persistence: Confirmed track retains identity lock
-                    continue
                 session.enter_contention(blacklist_expiration_frame=current_frame_num + 10)
                 t_cache["is_confirmed"] = False
                 t_cache["history"] = []
@@ -693,7 +726,13 @@ class BiometricTrackingEngine:
                     for old_tid, old_info in list(self.recent_track_history.items()):
                         if current_frame_num - old_info["last_seen"] <= 45 and old_info.get("confirmed", False):
                             name_cand = old_info.get("name", "")
-                            if name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"] and not name_cand.startswith("Scanning") and not name_cand.startswith("Contended"):
+                            old_sess = self._sessions.get(old_tid)
+                            is_valid_cand = (old_sess and old_sess.status == TrackStatus.CONFIRMED) or (
+                                name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"]
+                                and not str(name_cand).startswith("Scanning")
+                                and not str(name_cand).startswith("Contended")
+                            )
+                            if is_valid_cand:
                                 iou_val = compute_box_iou(curr_box, old_info["box"])
                                 if iou_val > best_iou:
                                     best_iou = iou_val
@@ -743,18 +782,19 @@ class BiometricTrackingEngine:
             if is_contended_flag and not is_confirmed:
                 subject_name = f"Contended Track {track_id}"
 
-            is_scanning = subject_name.startswith("Scanning") or (subject_name.startswith("Contended") and not is_contended_flag)
-            is_unverified = subject_name.startswith("Unverified")
-            is_unknown = subject_name in ["Unknown", "Ambiguous Match", "Unknown Person"]
+            is_scanning = (session.status == TrackStatus.SCANNING) or (not is_confirmed and not is_contended_flag and session.status != TrackStatus.UNKNOWN)
+            is_unverified = (session.status == TrackStatus.UNVERIFIED)
+            is_unknown = (session.status == TrackStatus.UNKNOWN) or subject_name in ["Unknown", "Ambiguous Match", "Unknown Person"]
 
             # Anti-Limbo Expiration Timeout:
             # If an unconfirmed candidate has been scanning for >25 frames without any valid face detections,
             # transition from loud orange scanning alert to a muted unverified target.
             t_cache = self.track_cache.get(track_id, {})
-            valid_face_count = t_cache.get("valid_face_crops", 0)
+            valid_face_count = session.valid_face_crops or t_cache.get("valid_face_crops", 0)
             if is_scanning and track_age > 25 and valid_face_count == 0:
                 is_unverified = True
                 is_scanning = False
+                session.status = TrackStatus.UNVERIFIED
                 subject_name = f"Unverified ID {track_id}"
                 with self.lock:
                     self.active_tracks[track_id] = subject_name
@@ -821,24 +861,8 @@ class BiometricTrackingEngine:
     # -----------------------------------------------------------------
 
     def get_identity(self, idx: int) -> str:
-        """Safely extract subject name from metadata across schema variants."""
-        if idx < 0:
-            return "Unknown"
-        with self.lock:
-            entry = None
-            if isinstance(self.metadata, dict):
-                entry = self.metadata.get(idx, self.metadata.get(str(idx), None))
-            elif isinstance(self.metadata, list):
-                if 0 <= idx < len(self.metadata):
-                    entry = self.metadata[idx]
-
-            if entry is None:
-                return "Unknown"
-            if isinstance(entry, dict):
-                return str(entry.get("name", "Unknown"))
-            elif isinstance(entry, str):
-                return str(entry)
-            return "Unknown"
+        """Safely extract subject name from metadata via BiometricMatcher."""
+        return self.matcher.get_identity(idx)
 
     def verify_face(
         self,
@@ -846,69 +870,13 @@ class BiometricTrackingEngine:
         face_center_ratio: float = 0.5,
         is_side_profile: bool = False
     ) -> Tuple[str, float, float, float]:
-        """Performs true Top-2 inter-subject margin gating and vector matching."""
-        if embedding is None:
-            return "Unknown", 999.0, 999.0, 0.0
-
-        embedding = np.array(embedding, dtype=np.float32).flatten()
-        if embedding.size != 512:
-            return "Unknown", 999.0, 999.0, 0.0
-
-        if face_center_ratio < 0.15 or face_center_ratio > 0.85:
-            return "Ambiguous Match", 999.0, 999.0, 0.0
-
-        quality_norm = float(np.linalg.norm(embedding))
-        if quality_norm < 0.3:
-            return "Unknown", 999.0, 999.0, quality_norm
-
-        norm_embedding = embedding / (quality_norm + 1e-10)
-        query_vector = np.expand_dims(norm_embedding, axis=0)
-
-        with self.lock:
-            total_in_index = self.index_adapter.ntotal
-            if total_in_index == 0:
-                return "Unknown", 999.0, 999.0, quality_norm
-
-            k_search = min(10, total_in_index)
-            distances, indices = self.index_adapter.search(query_vector, k=k_search)
-
-        if distances.shape[1] == 0:
-            return "Unknown", 999.0, 999.0, quality_norm
-
-        dist1 = float(distances[0][0])
-        idx1 = int(indices[0][0])
-        name1 = self.get_identity(idx1)
-
-        # Pose-aware strict threshold: side profile crops require tighter distance (squared L2 < 0.30 vs default 0.68)
-        effective_threshold = min(self.l2_threshold, 0.30) if is_side_profile else self.l2_threshold
-        if dist1 > effective_threshold or name1 in ["Unknown", ""]:
-            return "Unknown", dist1, 999.0, quality_norm
-
-        # Find the first nearest neighbor belonging to a DIFFERENT subject (Inter-Subject Gating)
-        dist_diff_subject = 999.0
-        diff_subject_found = False
-
-        for j in range(1, distances.shape[1]):
-            idx_j = int(indices[0][j])
-            if idx_j < 0:
-                continue
-            name_j = self.get_identity(idx_j)
-            if name_j not in ["Unknown", ""] and name_j.lower() != name1.lower():
-                dist_diff_subject = float(distances[0][j])
-                diff_subject_found = True
-                break
-
-        # Only enforce margin threshold if a distinct subject was found in top-k
-        effective_margin = max(self.margin_threshold, 0.20) if is_side_profile else self.margin_threshold
-        if diff_subject_found:
-            margin = abs(dist_diff_subject - dist1)
-            if margin < effective_margin:
-                return "Ambiguous Match", dist1, dist_diff_subject, quality_norm
-            dist2 = dist_diff_subject
-        else:
-            dist2 = 999.0
-
-        return name1, dist1, dist2, quality_norm
+        """Performs true Top-2 inter-subject margin gating and vector matching via BiometricMatcher."""
+        cand = self.matcher.match(
+            embedding=embedding,
+            face_center_ratio=face_center_ratio,
+            is_side_profile=is_side_profile
+        )
+        return cand.name, cand.dist1, cand.dist2, cand.norm
 
     def process_track_frame(
         self,
@@ -942,15 +910,9 @@ class BiometricTrackingEngine:
             # Prepare match candidate if embedding is present
             candidate = None
             if embedding is not None:
-                embedding = np.array(embedding, dtype=np.float32).flatten()
-                matched_name, d1, d2, current_norm = self.verify_face(
-                    embedding, face_center_ratio, is_side_profile=is_side_profile
-                )
-                candidate = MatchCandidate(
-                    name=matched_name,
-                    dist1=d1,
-                    dist2=d2,
-                    norm=current_norm,
+                candidate = self.matcher.match(
+                    embedding=embedding,
+                    face_center_ratio=face_center_ratio,
                     is_side_profile=is_side_profile
                 )
 
@@ -1007,54 +969,12 @@ class BiometricTrackingEngine:
         """
         return self.embedder.embed(img_or_crop, align=align, strict_alignment=False, upscale=False)
 
-    def _add_crop_to_embedder(self, track_id: int, crop: np.ndarray, frame_num: int):
-        with self._embedder_lock:
-            # Replace existing crop for this track with fresh one
-            self._embedder_queue = [item for item in self._embedder_queue if item["track_id"] != track_id]
-            if len(self._embedder_queue) >= 16:
-                self._embedder_queue.pop()
-            self._embedder_queue.insert(0, {
-                "track_id": track_id,
-                "crop": crop,
-                "frame_added": frame_num
-            })
-
-    def _embedder_worker(self):
-        while self._embedder_running:
-            self.flush()
-            time.sleep(0.005)
+    def _add_crop_to_embedder(self, track_id: int, crop: np.ndarray, frame_num: int) -> None:
+        self.embedding_worker.submit(track_id, crop, frame_num)
 
     def flush(self) -> None:
         """Processes any queued embedding crops synchronously (for tests and shutdown)."""
-        with self._embedder_lock:
-            if not self._embedder_queue:
-                return
-            batch_to_process = list(self._embedder_queue)
-            self._embedder_queue.clear()
-
-        crops_to_sanitize = []
-        embeddings: List[Optional[np.ndarray]] = []
-        ratios: List[Optional[Tuple[float, float, float, float]]] = []
-        is_sides: List[bool] = []
-
-        for item in batch_to_process:
-            crop = item["crop"]
-            crops_to_sanitize.append(crop)
-            is_side = False
-            if hasattr(self.embedder, "is_side_profile"):
-                try:
-                    is_side = self.embedder.is_side_profile(crop)
-                except Exception:
-                    is_side = False
-            emb = self.embedder.embed(crop, align=True, strict_alignment=True, upscale=True)
-            embeddings.append(emb)
-            is_sides.append(is_side)
-            ratios.append((0.1, 0.1, 0.8, 0.8) if emb is not None else None)
-
-        for i, item in enumerate(batch_to_process):
-            self._handle_embedding_result(item["track_id"], embeddings[i], ratios[i], is_side_profile=is_sides[i])
-
-        GDPRMemorySanitizer.sanitize_crop_list(crops_to_sanitize)
+        self.embedding_worker.flush()
         if hasattr(self.audit_logger, "flush"):
             self.audit_logger.flush()
 
@@ -1181,9 +1101,7 @@ class BiometricTrackingEngine:
 
     def stop(self) -> None:
         """Gracefully terminates background worker threads."""
-        self._embedder_running = False
-        if self._embedder_thread.is_alive():
-            self._embedder_thread.join(timeout=1.0)
+        self.embedding_worker.stop()
         if hasattr(self.audit_logger, 'stop'):
             self.audit_logger.stop()
         print("[BiometricEngine] Engine stopped cleanly.")

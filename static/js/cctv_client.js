@@ -413,7 +413,6 @@ class CCTVClient {
         const phoneEl = document.getElementById('modal-phone');
         const addressEl = document.getElementById('modal-address');
         const dobEl = document.getElementById('modal-dob');
-        const galleryEl = document.getElementById('dossier-gallery');
         const notesEl = document.getElementById('modal-intel-notes');
 
         if (nameEl) nameEl.textContent = name;
@@ -425,13 +424,12 @@ class CCTVClient {
         if (statusEl) statusEl.textContent = 'CONFIRMED CONSENSUS LOCK';
         if (occEl) occEl.textContent = 'REGISTERED PERSONNEL';
         if (notesEl) notesEl.textContent = 'Retrieving classified multi-vector biometric profile...';
-        if (galleryEl) {
-            galleryEl.innerHTML = `
-                <div class="dossier-thumb">
-                    <img src="/api/subject/avatar/${encodeURIComponent(name)}" alt="${this.escapeHtml(name)}" onerror="this.src='/logo.png'">
-                </div>
-            `;
-        }
+        
+        // Initialize carousel with avatar fallback while fetching full set
+        this.setupDossierSlider([
+            { url: `/api/subject/avatar/${encodeURIComponent(name)}`, filename: 'Frontal.jpg' }
+        ]);
+
         modal.classList.add('active');
         modal.setAttribute('aria-hidden', 'false');
 
@@ -456,17 +454,192 @@ class CCTVClient {
                     notesEl.textContent = `${threat}Authorized subject for automated facial matching. Exemplar vectors indexed in FAISS repository. Real-time consensus confirmed.`;
                 }
 
-                if (galleryEl && data.images && Array.isArray(data.images) && data.images.length > 0) {
-                    galleryEl.innerHTML = data.images.map(img => `
-                        <div class="dossier-thumb">
-                            <img src="${this.escapeHtml(img.url)}" alt="${this.escapeHtml(img.filename)}" onerror="this.src='/logo.png'">
-                        </div>
-                    `).join('');
+                if (data.images && Array.isArray(data.images) && data.images.length > 0) {
+                    this.setupDossierSlider(data.images);
                 }
             }
         } catch (err) {
             console.warn('[CCTVClient] Failed to load dossier:', err);
         }
+    }
+
+    formatAngleLabel(filename = '') {
+        const clean = filename.toLowerCase();
+        if (clean.includes('frontal')) return 'FRONTAL VIEW';
+        if (clean.includes('side_left') || clean.includes('side left')) return 'SIDE PROFILE (LEFT)';
+        if (clean.includes('side_right') || clean.includes('side right')) return 'SIDE PROFILE (RIGHT)';
+        if (clean.includes('left')) return 'LEFT 45° ANGLE';
+        if (clean.includes('right')) return 'RIGHT 45° ANGLE';
+        if (clean.includes('tilt_up') || clean.includes('tilt up')) return 'TILT UP (CHIN)';
+        if (clean.includes('tilt_down') || clean.includes('tilt down')) return 'TILT DOWN';
+        return filename.replace(/\.[^/.]+$/, '').replace(/_/g, ' ').toUpperCase() || 'BIOMETRIC ANGLE';
+    }
+
+    setupDossierSlider(images) {
+        this.sliderImages = (images && images.length > 0) ? images : [{ url: '/logo.png', filename: 'Profile.jpg' }];
+        this.currentSlideIndex = 0;
+
+        const track = document.getElementById('dossier-slider-track');
+        const dotsContainer = document.getElementById('slider-dots');
+        const thumbsContainer = document.getElementById('slider-thumbs');
+        const prevBtn = document.getElementById('slider-prev-btn');
+        const nextBtn = document.getElementById('slider-next-btn');
+        const viewport = document.getElementById('slider-viewport');
+
+        if (!track) return;
+
+        // 1. Populate Track Slides
+        track.innerHTML = this.sliderImages.map((img, idx) => {
+            const label = this.formatAngleLabel(img.filename || '');
+            return `
+                <div class="dossier-slide" data-slide-index="${idx}">
+                    <img src="${this.escapeHtml(img.url)}" alt="${this.escapeHtml(label)}" onerror="this.src='/logo.png'">
+                </div>
+            `;
+        }).join('');
+
+        // 2. Populate Pagination Dots
+        if (dotsContainer) {
+            dotsContainer.innerHTML = this.sliderImages.map((_, idx) => `
+                <button type="button" class="slider-dot ${idx === 0 ? 'active' : ''}" data-index="${idx}" aria-label="Slide ${idx + 1}"></button>
+            `).join('');
+
+            dotsContainer.onclick = (e) => {
+                const dot = e.target.closest('.slider-dot');
+                if (dot) {
+                    const idx = parseInt(dot.getAttribute('data-index'), 10);
+                    if (!isNaN(idx)) this.goToSlide(idx);
+                }
+            };
+        }
+
+        // 3. Populate Mini Thumbnails Strip
+        if (thumbsContainer) {
+            thumbsContainer.innerHTML = this.sliderImages.map((img, idx) => {
+                const label = this.formatAngleLabel(img.filename || '');
+                return `
+                    <div class="slider-thumb-item ${idx === 0 ? 'active' : ''}" data-index="${idx}" title="${this.escapeHtml(label)}">
+                        <img src="${this.escapeHtml(img.url)}" alt="${this.escapeHtml(label)}" onerror="this.src='/logo.png'">
+                    </div>
+                `;
+            }).join('');
+
+            thumbsContainer.onclick = (e) => {
+                const thumb = e.target.closest('.slider-thumb-item');
+                if (thumb) {
+                    const idx = parseInt(thumb.getAttribute('data-index'), 10);
+                    if (!isNaN(idx)) this.goToSlide(idx);
+                }
+            };
+        }
+
+        // 4. Arrow Navigation
+        if (prevBtn) {
+            prevBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.goToSlide(this.currentSlideIndex - 1);
+            };
+        }
+        if (nextBtn) {
+            nextBtn.onclick = (e) => {
+                e.stopPropagation();
+                this.goToSlide(this.currentSlideIndex + 1);
+            };
+        }
+
+        // 5. Swipe and Drag Support
+        if (viewport && !viewport._sliderSwipeBound) {
+            viewport._sliderSwipeBound = true;
+            let startX = 0;
+            let currentX = 0;
+            let isDragging = false;
+
+            const onStart = (clientX) => {
+                isDragging = true;
+                startX = clientX;
+                currentX = clientX;
+            };
+
+            const onMove = (clientX) => {
+                if (!isDragging) return;
+                currentX = clientX;
+            };
+
+            const onEnd = () => {
+                if (!isDragging) return;
+                isDragging = false;
+                const diff = currentX - startX;
+                const threshold = 40;
+                if (diff < -threshold) {
+                    this.goToSlide(this.currentSlideIndex + 1);
+                } else if (diff > threshold) {
+                    this.goToSlide(this.currentSlideIndex - 1);
+                }
+            };
+
+            // Touch listeners
+            viewport.addEventListener('touchstart', (e) => {
+                if (e.touches && e.touches.length === 1) onStart(e.touches[0].clientX);
+            }, { passive: true });
+
+            viewport.addEventListener('touchmove', (e) => {
+                if (e.touches && e.touches.length === 1) onMove(e.touches[0].clientX);
+            }, { passive: true });
+
+            viewport.addEventListener('touchend', () => onEnd(), { passive: true });
+
+            // Pointer / Mouse drag listeners
+            viewport.addEventListener('pointerdown', (e) => onStart(e.clientX));
+            viewport.addEventListener('pointermove', (e) => onMove(e.clientX));
+            viewport.addEventListener('pointerup', () => onEnd());
+            viewport.addEventListener('pointercancel', () => onEnd());
+        }
+
+        this.goToSlide(0);
+    }
+
+    goToSlide(index) {
+        if (!this.sliderImages || this.sliderImages.length === 0) return;
+        const total = this.sliderImages.length;
+        let newIndex = index;
+        if (newIndex < 0) newIndex = total - 1;
+        if (newIndex >= total) newIndex = 0;
+
+        this.currentSlideIndex = newIndex;
+
+        // Slide Track
+        const track = document.getElementById('dossier-slider-track');
+        if (track) {
+            track.style.transform = `translateX(-${newIndex * 100}%)`;
+        }
+
+        // Counter
+        const counterEl = document.getElementById('slider-counter');
+        if (counterEl) {
+            counterEl.textContent = `${newIndex + 1} / ${total}`;
+        }
+
+        // Angle label
+        const angleEl = document.getElementById('slider-angle-label');
+        if (angleEl && this.sliderImages[newIndex]) {
+            angleEl.textContent = this.formatAngleLabel(this.sliderImages[newIndex].filename || '');
+        }
+
+        // Update Dots
+        const dots = document.querySelectorAll('.slider-pagination-dots .slider-dot');
+        dots.forEach((dot, idx) => {
+            dot.classList.toggle('active', idx === newIndex);
+        });
+
+        // Update Thumbnails
+        const thumbs = document.querySelectorAll('.slider-thumbs-strip .slider-thumb-item');
+        thumbs.forEach((thumb, idx) => {
+            const isActive = idx === newIndex;
+            thumb.classList.toggle('active', isActive);
+            if (isActive) {
+                thumb.scrollIntoView({ behavior: 'smooth', block: 'nearest', inline: 'center' });
+            }
+        });
     }
 
     closeDossierModal() {
@@ -552,11 +725,23 @@ class CCTVClient {
             this.telemetryContainer.addEventListener('mouseleave', () => { this._isHoveringTelemetry = false; });
         }
 
-        // ESC key to close modal or drawer
+        // ESC key to close modal or drawer, Arrow keys to slide images
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 this.closeDossierModal();
                 if (window.appDrawer) window.appDrawer.closeDrawer();
+                return;
+            }
+
+            const modal = document.getElementById('dossier-modal');
+            if (modal && modal.classList.contains('active')) {
+                if (e.key === 'ArrowLeft') {
+                    e.preventDefault();
+                    this.goToSlide(this.currentSlideIndex - 1);
+                } else if (e.key === 'ArrowRight') {
+                    e.preventDefault();
+                    this.goToSlide(this.currentSlideIndex + 1);
+                }
             }
         });
     }

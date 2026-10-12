@@ -174,9 +174,49 @@
             </div>
             <div class="dossier-modal-body">
                 <div class="dossier-gallery-col">
-                    <div class="dossier-section-title">ENROLLED BIOMETRIC PROFILES</div>
-                    <div class="dossier-image-reel" id="dossier-gallery">
-                        <!-- Dynamically filled with aligned face crops -->
+                    <div class="dossier-gallery-header">
+                        <div class="dossier-section-title">ENROLLED BIOMETRIC PROFILES</div>
+                        <div class="slider-counter-badge" id="slider-counter">1 / 1</div>
+                    </div>
+                    
+                    <!-- Tactical Biometric Image Slider Component -->
+                    <div class="dossier-slider-card">
+                        <!-- Angle / Filename Badge -->
+                        <div class="slider-caption-bar">
+                            <span class="slider-angle-label" id="slider-angle-label">FRONTAL ANGLE</span>
+                            <span class="slider-sub-status">VECTOR ALIGNED</span>
+                        </div>
+
+                        <!-- Main Sliding Viewport -->
+                        <div class="dossier-slider-viewport" id="slider-viewport">
+                            <!-- Nav Arrows -->
+                            <button type="button" class="slider-arrow-btn prev" id="slider-prev-btn" aria-label="Previous Profile Image" title="Previous Angle (Left Arrow)">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                            </button>
+                            
+                            <!-- Sliding Track -->
+                            <div class="dossier-slider-track" id="dossier-slider-track">
+                                <div class="dossier-slide active">
+                                    <img src="/logo.png" alt="Profile" id="slider-fallback-img">
+                                </div>
+                            </div>
+
+                            <button type="button" class="slider-arrow-btn next" id="slider-next-btn" aria-label="Next Profile Image" title="Next Angle (Right Arrow)">
+                                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                            </button>
+
+                            <!-- Tactical Corner Brackets -->
+                            <div class="hud-corner top-left"></div>
+                            <div class="hud-corner top-right"></div>
+                            <div class="hud-corner bottom-left"></div>
+                            <div class="hud-corner bottom-right"></div>
+                        </div>
+
+                        <!-- Pagination Dots / Bars -->
+                        <div class="slider-pagination-dots" id="slider-dots"></div>
+
+                        <!-- Mini Thumbnail Strip (Click to Jump) -->
+                        <div class="slider-thumbs-strip" id="slider-thumbs"></div>
                     </div>
                 </div>
                 <div class="dossier-info-col">
@@ -224,8 +264,8 @@
     </div>
 
     <!-- Global Client Logic -->
-    <script src="/static/js/cctv_client.js?v=20261013_04"></script>
-    <script src="/static/js/enrollment_drawer.js?v=20261013_04"></script>
+    <script src="/static/js/cctv_client.js?v=20261013_05"></script>
+    <script src="/static/js/enrollment_drawer.js?v=20261013_05"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             window.appDrawer = new EnrollmentDrawer();

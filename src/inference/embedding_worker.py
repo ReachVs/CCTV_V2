@@ -95,7 +95,7 @@ class EmbeddingBatchWorker:
             ratios.append((0.1, 0.1, 0.8, 0.8) if emb is not None else None)
 
         for i, item in enumerate(batch_to_process):
-            self.on_result(item["track_id"], embeddings[i], ratios[i], is_side_profile=is_sides[i])
+            self.on_result(item["track_id"], embeddings[i], ratios[i], is_sides[i])
 
         GDPRMemorySanitizer.sanitize_crop_list(crops_to_sanitize)
 

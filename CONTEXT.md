@@ -75,4 +75,15 @@ The deep vector matching and distance arbitration seam (`BiometricMatcher` in `s
 ### EmbeddingBatchWorker
 The background queue and execution worker seam (`EmbeddingBatchWorker` in `src.inference.embedding_worker`). Decouples asynchronous face crop queue management, track deduplication, GPU/CPU batch inference, and thread lifecycles from the real-time tracking engine, ensuring sub-millisecond frame processing latency.
 
+### IdentityObserver
+The authoritative domain event and observer seam (`IdentityObserver`, `IdentityConfirmedEvent`, `IdentityEventDispatcher` in `src.domain.identity_observer`). Decouples verified biometric identity locks from side-effect consumers. Side-effect adapters (`AttendanceIdentityObserver`, `AuditIdentityObserver`) register as independent listeners at the seam, eliminating frame-loop property sniffing, cross-module monkeypatching, and attendance leakage into forensic audit storage.
+
+### TrackRegistry
+The authoritative single source of truth for subject session lifecycles, spatial state, and tracking history (`TrackRegistry` in `src.domain.track_registry`). Encapsulates spatial IoU inheritance across track swaps, spatial occlusion checking, anti-limbo scanning timeouts, and stale/phantom track garbage collection behind thread-safe domain methods. Exposes zero-overhead dict facades (`active_tracks`, `track_cache`, `track_last_seen`, `track_first_seen`, `track_keypoints`) for seamless backward compatibility.
+
+### BiometricRepository
+The authoritative persistence, multi-store synchronization, and self-healing seam (`BiometricRepository` in `src.database.biometric_repository`). Atomically synchronizes subject profiles and multi-pose 512D ArcFace embeddings across SQLite (`faces.db`), FAISS (`faces.index`), and in-memory cache (`metadata.json`). Encapsulates health diagnostics (`check_health`), automated self-healing (`auto_heal`), and full archive reconstruction (`rebuild_from_archive`), reducing utility scripts (`auto_heal.py`, `rebuild_db.py`) to thin adapters.
+
+### StreamBroadcaster
+The authoritative streaming and client broadcasting seam (`StreamBroadcaster` in `src.services.stream_broadcaster`). Encapsulates camera stream pooling, frame processing orchestration, FPS telemetry, JPEG compression, WebSocket frame broadcasting (`/ws/raw_video`, `/ws/video`), and MJPEG streaming fallback (`/video_feed`). Decouples continuous real-time video ingestion from FastAPI HTTP routing in `cctv_server.py`.
 

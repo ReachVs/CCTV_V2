@@ -8,17 +8,18 @@ A complete directory of all project files, source modules, configuration files, 
 
 ### 📄 Documentation & Core Files
 * [README.md](file:///Users/ceaser/Documents/School/CCTV%20Project/README.md) — Main enterprise documentation & architectural overview
+* [Documentation/PROJECT_JOURNAL.md](file:///Users/ceaser/Documents/School/CCTV%20Project/Documentation/PROJECT_JOURNAL.md) — Academic & Engineering Project Journal, Scope Shift, Research & Daily Log
+* [Documentation/PROFESSOR_PROJECT_REPORT.md](file:///Users/ceaser/Documents/School/CCTV%20Project/Documentation/PROFESSOR_PROJECT_REPORT.md) — Professor project report & mathematical evaluation
+* [Documentation/architecture-review-20261021.html](file:///Users/ceaser/Documents/School/CCTV%20Project/Documentation/architecture-review-20261021.html) — Apple Design Architecture Review & Deepening Interactive Report
+* [Documentation/PROJECT_DOCUMENTATION.md](file:///Users/ceaser/Documents/School/CCTV%20Project/Documentation/PROJECT_DOCUMENTATION.md) — Comprehensive technical documentation & run guide
 * [cctv_system_architecture.md](file:///Users/ceaser/Documents/School/CCTV%20Project/cctv_system_architecture.md) — Deep technical architecture, component design & flowcharts
-* [COMMANDS.md](file:///Users/ceaser/Documents/School/CCTV%20Project/COMMANDS.md) — Quick command reference
 * [requirements.txt](file:///Users/ceaser/Documents/School/CCTV%20Project/requirements.txt) — Python dependencies specification
 * [docker-compose.yml](file:///Users/ceaser/Documents/School/CCTV%20Project/docker-compose.yml) — Multi-container Docker orchestration
 * [Dockerfile](file:///Users/ceaser/Documents/School/CCTV%20Project/Dockerfile) — Docker build instructions
 
 ### 🚀 Entry Point Wrappers
-* [cctv_server.py](file:///Users/ceaser/Documents/School/CCTV%20Project/cctv_server.py) — Web server launcher
-* [cctv_server_fastapi.py](file:///Users/ceaser/Documents/School/CCTV%20Project/cctv_server_fastapi.py) — FastAPI ASGI server entry-point
-* [live_cctv.py](file:///Users/ceaser/Documents/School/CCTV%20Project/live_cctv.py) — Standalone OpenCV inference launcher
-* [live_cctv_optimized.py](file:///Users/ceaser/Documents/School/CCTV%20Project/live_cctv_optimized.py) — Optimized live inference launcher
+* [cctv_server.py](file:///Users/ceaser/Documents/School/CCTV%20Project/cctv_server.py) — Primary CCTV pipeline & FastAPI web dashboard launcher
+* [src/api/cctv_server_fastapi.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/api/cctv_server_fastapi.py) — Standalone FastAPI ASGI entrypoint module
 * [enroll.py](file:///Users/ceaser/Documents/School/CCTV%20Project/enroll.py) — Face enrollment runner
 * [enroll_webcam.py](file:///Users/ceaser/Documents/School/CCTV%20Project/enroll_webcam.py) — Guided 3-second webcam face enrollment
 * [db_setup.py](file:///Users/ceaser/Documents/School/CCTV%20Project/db_setup.py) — Database schema initialization runner
@@ -41,6 +42,12 @@ A complete directory of all project files, source modules, configuration files, 
 #### 🗄️ Database & Enrollment Layer (`src/database/`)
 * [src/database/db_setup.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/database/db_setup.py) — SQLite WAL mode database schema setup
 * [src/database/enroll.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/database/enroll.py) — AdaFace embedding & FAISS vector index builder
+* [src/database/biometric_repository.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/database/biometric_repository.py) — Authoritative biometric profile & FAISS sync repo
+* [src/database/audit_repository.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/database/audit_repository.py) — Encrypted WAL audit logger & repository
+
+#### ⚙️ Domain Services Layer (`src/services/`)
+* [src/services/attendance_service.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/services/attendance_service.py) — Automated Biometric Attendance Verification & Daily Checklist Service
+* [src/services/biometric_enrollment_manager.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/services/biometric_enrollment_manager.py) — Multi-exemplar face curation & enrollment manager
 
 #### 📹 Inference & Biometrics Layer (`src/inference/`)
 * [src/inference/live_cctv.py](file:///Users/ceaser/Documents/School/CCTV%20Project/src/inference/live_cctv.py) — YOLOv8 + ByteTrack + AdaFace real-time vision loop
@@ -111,32 +118,37 @@ python3 -m src.database.enroll
 python3 enroll_webcam.py
 ```
 
-### 4. Launching Servers & APIs
+### 4. Running the CCTV Pipeline & Web Dashboard
 ```bash
-# Start FastAPI + WebSockets Server (Recommended)
+# Option 1: Start FastAPI + WebSockets Server via root runner (Recommended)
 python3 cctv_server.py
 
-# Direct FastAPI entrypoint
-python3 cctv_server_fastapi.py
-
-# Direct module invocation
+# Option 2: Direct module invocation
 python3 -m src.api.cctv_server
 
-# Run Model Context Protocol (MCP) Server
+# Option 3: Run with a specific video file (e.g. occlusion stress test)
+CAMERA_SOURCE=stress_occlusion.mp4 python3 cctv_server.py
+
+# Option 4: Run with an external webcam index (0 = default Mac camera, 1 = external USB)
+CAMERA_SOURCE=1 python3 cctv_server.py
+
+# Option 5: Run with an RTSP Network IP Camera
+CAMERA_SOURCE="rtsp://admin:password@192.168.1.100:554/stream1" python3 cctv_server.py
+
+# Option 6: Run on a custom port
+PORT=8080 python3 cctv_server.py
+
+# Option 7: Run Model Context Protocol (MCP) Server
 python3 -m src.api.mcp_server
 ```
 
-### 5. Live CCTV Standalone Application
-```bash
-# Launch OpenCV GUI Live Inference Pipeline
-python3 live_cctv.py
+> **🌐 Accessing the Real-Time CCTV System:**
+> Once the server starts, open your web browser:
+> - **Live CCTV Video & Telemetry Dashboard:** [http://localhost:8000/](http://localhost:8000/)
+> - **Web-based Face Enrollment:** [http://localhost:8000/enroll](http://localhost:8000/enroll)
+> - **Interactive Swagger API Docs:** [http://localhost:8000/docs](http://localhost:8000/docs)
+> - **WebSocket Video Stream:** `ws://localhost:8000/ws/video`
 
-# Launch Optimized High-Performance Variant
-python3 live_cctv_optimized.py
-
-# Direct module invocation
-python3 -m src.inference.live_cctv
-```
 
 ### 6. Neural Model Export & Pre-warming
 ```bash

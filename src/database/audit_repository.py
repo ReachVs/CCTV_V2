@@ -54,6 +54,7 @@ class AuditLogger(ABC):
         """Waits until all pending queued audit events are persisted to disk."""
         pass
 
+
     def stop(self) -> None:
         """Gracefully terminates worker threads and closes open connections."""
         pass
@@ -95,6 +96,7 @@ class EncryptedWALAuditLogger(AuditLogger):
                             os.makedirs(db_dir, exist_ok=True)
                             with open(key_file, "wb") as kf:
                                 kf.write(self.key)
+                            os.chmod(key_file, 0o600)
                         except Exception:
                             pass
             else:
@@ -225,6 +227,7 @@ class EncryptedWALAuditLogger(AuditLogger):
             "meta": extra_meta or kwargs.get("meta", {})
         }
         self.log_queue.put((timestamp, int(track_id), payload))
+
 
     def fetch_recent_events(self, limit: int = 50) -> List[Dict[str, Any]]:
         """Synchronously retrieves and decrypts the latest audit log records."""

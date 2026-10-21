@@ -39,24 +39,24 @@
 
         <!-- Camera Ingestion Channel Selector -->
         <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-            <div class="glass-panel" style="padding: 10px 14px; border-color: var(--cyan-accent); background: rgba(6,182,212,0.06); cursor: pointer;">
-                <div style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: #fff;">FEED 01 // MAIN</div>
-                <div style="font-size: 0.65rem; color: var(--emerald-verified); display: flex; align-items: center; gap: 4px; margin-top: 2px;">
-                    <span style="width: 5px; height: 5px; border-radius: 50%; background: var(--emerald-verified);"></span>
-                    ACTIVE [INGESTING]
+            <div class="glass-panel" style="padding: 12px 14px; border-color: rgba(56, 189, 248, 0.4); background: rgba(56, 189, 248, 0.08); cursor: pointer; box-shadow: 0 4px 16px rgba(0,0,0,0.3), 0 0 16px rgba(56,189,248,0.18);">
+                <div style="font-family: var(--font-brand); font-size: 0.78rem; font-weight: 700; color: #fff; letter-spacing: -0.01em;">Feed 01 // Main</div>
+                <div style="font-size: 0.65rem; color: var(--emerald-verified); display: flex; align-items: center; gap: 5px; margin-top: 3px; font-weight: 600;">
+                    <span style="width: 6px; height: 6px; border-radius: 50%; background: var(--emerald-verified); box-shadow: 0 0 8px var(--emerald-verified);"></span>
+                    Active Ingesting
                 </div>
             </div>
-            <div class="glass-panel" style="padding: 10px 14px; opacity: 0.5;">
-                <div style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--text-muted);">FEED 02 // EAST</div>
-                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">STANDBY</div>
+            <div class="glass-panel" style="padding: 12px 14px; opacity: 0.55; cursor: pointer;">
+                <div style="font-family: var(--font-brand); font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); letter-spacing: -0.01em;">Feed 02 // East</div>
+                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 3px; font-weight: 500;">Standby</div>
             </div>
-            <div class="glass-panel" style="padding: 10px 14px; opacity: 0.5;">
-                <div style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--text-muted);">FEED 03 // NORTH</div>
-                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">STANDBY</div>
+            <div class="glass-panel" style="padding: 12px 14px; opacity: 0.55; cursor: pointer;">
+                <div style="font-family: var(--font-brand); font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); letter-spacing: -0.01em;">Feed 03 // North</div>
+                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 3px; font-weight: 500;">Standby</div>
             </div>
-            <div class="glass-panel" style="padding: 10px 14px; opacity: 0.5;">
-                <div style="font-family: var(--font-mono); font-size: 0.72rem; font-weight: 700; color: var(--text-muted);">FEED 04 // VAULT</div>
-                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 2px;">STANDBY</div>
+            <div class="glass-panel" style="padding: 12px 14px; opacity: 0.55; cursor: pointer;">
+                <div style="font-family: var(--font-brand); font-size: 0.78rem; font-weight: 700; color: var(--text-secondary); letter-spacing: -0.01em;">Feed 04 // Vault</div>
+                <div style="font-size: 0.65rem; color: var(--text-muted); margin-top: 3px; font-weight: 500;">Standby</div>
             </div>
         </div>
     </section>
@@ -79,6 +79,70 @@
                 <div style="padding: 20px 12px; text-align: center; color: var(--text-muted); font-size: 0.75rem; font-family: var(--font-mono); border: 1px dashed var(--border-medium); border-radius: var(--radius-md);">
                     SCANNING SURVEILLANCE FIELD...
                 </div>
+            </div>
+        </div>
+
+        <!-- Automated Attendance Checklist Card -->
+        <div class="sidebar-card" id="attendance-card" style="margin-bottom: 12px;">
+            <div class="card-title-row">
+                <div class="card-title">
+                    <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
+                    ATTENDANCE CHECKLIST
+                </div>
+                <span class="status-badge verified" id="att-badge-cutoff" style="font-size: 0.6rem;">SCHEDULE: <span id="att-schedule-display">18:00 - 21:00</span></span>
+            </div>
+
+            <!-- Attendance Schedule Configuration Bar (Class Start & Class End) -->
+            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; background: rgba(255,255,255,0.04); padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-hairline);">
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label for="att-start-time-input" style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">START:</label>
+                    <input type="time" id="att-start-time-input" value="18:00" class="form-input" style="font-size: 0.74rem; padding: 4px 8px; width: 84px; border-radius: 6px;" title="Class Start Time">
+                </div>
+                <div style="display: flex; align-items: center; gap: 5px;">
+                    <label for="att-end-time-input" style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">END:</label>
+                    <input type="time" id="att-end-time-input" value="21:00" class="form-input" style="font-size: 0.74rem; padding: 4px 8px; width: 84px; border-radius: 6px;" title="Class End Time">
+                </div>
+                <input type="number" id="att-grace-input" placeholder="+Grace(m)" min="0" max="60" value="15" class="form-input" style="font-size: 0.72rem; padding: 4px 6px; width: 62px; border-radius: 6px;" title="Grace period in minutes">
+                <button type="button" id="att-btn-save-cutoff" class="tool-btn" style="padding: 4px 10px; font-size: 0.7rem; background: var(--cyan-accent); color: #040810; font-weight: 700; border: none; cursor: pointer;">Set</button>
+            </div>
+
+            <!-- Summary KPI Badges (Apple Rounded Capsules) -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
+                <div style="background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--emerald-verified); font-family: var(--font-mono);" id="att-stat-present">0</div>
+                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">PRESENT</div>
+                </div>
+                <div style="background: rgba(255, 159, 10, 0.1); border: 1px solid rgba(255, 159, 10, 0.25); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--amber-warning); font-family: var(--font-mono);" id="att-stat-late">0</div>
+                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">LATE</div>
+                </div>
+                <div style="background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.22); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: #f87171; font-family: var(--font-mono);" id="att-stat-absent">0</div>
+                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">ABSENT</div>
+                </div>
+                <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
+                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--cyan-accent); font-family: var(--font-mono);" id="att-stat-total">0</div>
+                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">STUDENTS</div>
+                </div>
+            </div>
+
+            <!-- Scrollable Attendance Checklist Roster -->
+            <div id="attendance-roster-list" style="display: flex; flex-direction: column; gap: 6px; max-height: 220px; overflow-y: auto; padding: 2px;">
+                <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);">
+                    LOADING ATTENDANCE ROSTER...
+                </div>
+            </div>
+
+            <!-- Footer Toolbar with Check All Present & Reset -->
+            <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border-hairline);">
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <span style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono);" id="att-date-label">TODAY</span>
+                    <button type="button" id="att-btn-check-all" class="tool-btn" style="padding: 2px 7px; font-size: 0.62rem; color: var(--emerald-verified); background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.3); border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 3px;" title="Check attendance for all students (Mark All Present)">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                        Check All Present
+                    </button>
+                </div>
+                <button type="button" id="att-btn-reset" class="tool-btn" style="padding: 2px 7px; font-size: 0.62rem; color: #f87171; background: transparent; border: 1px solid rgba(244,63,94,0.3); border-radius: 4px; cursor: pointer;" title="Reset today's attendance checklist">Reset</button>
             </div>
         </div>
 

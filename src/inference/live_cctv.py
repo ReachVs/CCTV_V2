@@ -84,6 +84,17 @@ def reload_biometric_db() -> None:
     get_engine().reload_index()
 
 
+def set_attendance_service(service: Any) -> None:
+    """Sets automated attendance service on the canonical shared engine singleton."""
+    get_engine().set_attendance_service(service)
+
+
+def register_identity_observer(observer: Any) -> None:
+    """Registers an identity observer on the canonical shared engine singleton."""
+    get_engine().register_identity_observer(observer)
+
+
+
 def l2_normalize(vector) -> np.ndarray:
     """Calculates unit-length L2 normalized vector."""
     v = np.array(vector, dtype=np.float32)

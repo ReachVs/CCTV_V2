@@ -46,6 +46,13 @@ from src.domain.track_registry import (
     TrackFirstSeenProxy,
     TrackKeypointsProxy
 )
+from src.domain.identity_observer import (
+    IdentityConfirmedEvent,
+    IdentityObserver,
+    AttendanceIdentityObserver,
+    AuditIdentityObserver,
+    IdentityEventDispatcher,
+)
 from src.inference.consensus import (
     IdentityConsensus,
     MatchCandidate,
@@ -170,6 +177,7 @@ class BiometricTrackingEngine:
         timeout_frames: int = 3,
         annotator: Optional[Annotator] = None,
         consensus: Optional[IdentityConsensus] = None,
+        attendance_service: Optional[Any] = None,
     ):
         self.lock = threading.RLock()
         self.l2_threshold = l2_threshold
@@ -243,17 +251,36 @@ class BiometricTrackingEngine:
         # Privacy mode flag
         self._pose_only_mode = False
 
-        # Deep Domain Seam: TrackRegistry manages all SubjectSession state
-        self.registry = TrackRegistry()
+        # Deep Domain Seam: Identity Lifecycle Event Dispatcher & Observers
+        self.identity_dispatcher = IdentityEventDispatcher()
         self.frame_count = 0
         self.identified_cooldowns: Dict[str, int] = {}
+
+        # Wire default AuditIdentityObserver
+        self.audit_observer = AuditIdentityObserver(
+            audit_logger=self.audit_logger,
+            cooldown_frames=self.cooldown_frames,
+            identified_cooldowns=self.identified_cooldowns,
+        )
+        self.identity_dispatcher.register(self.audit_observer)
+
+        # First-Class Automated Attendance Service Seam
+        self.attendance_service: Optional[Any] = attendance_service
+        self._attendance_observer: Optional[AttendanceIdentityObserver] = None
+        if attendance_service is not None:
+            self._attendance_observer = AttendanceIdentityObserver(attendance_service)
+            self.identity_dispatcher.register(self._attendance_observer)
+
+        # Deep Domain Seam: TrackRegistry manages all SubjectSession state
+        self.registry = TrackRegistry()
 
         # Deep Ingestion & Pre-Filtering Modules
         self.pre_filter = TrackingPreFilter(
             face_aligner=self.face_aligner,
-            pose_estimator=self.pose_estimator,
+            pose_estimator=lambda: self.pose_estimator,
             jitter_engine=self.jitter_engine,
         )
+        self.pre_filter.recent_track_history = self.registry.recent_track_history
         self.biometric_scheduler = BiometricIngestionScheduler(
             jitter_engine=self.jitter_engine,
             temporal_subsampler=self.temporal_subsampler,
@@ -377,10 +404,11 @@ class BiometricTrackingEngine:
 
     @property
     def recent_track_history(self) -> Dict[int, Dict[str, Any]]:
-        return self.pre_filter.recent_track_history
+        return self.registry.recent_track_history
 
     @recent_track_history.setter
     def recent_track_history(self, val: Dict[int, Dict[str, Any]]) -> None:
+        self.registry.recent_track_history = val
         self.pre_filter.recent_track_history = val
 
     @property
@@ -719,56 +747,16 @@ class BiometricTrackingEngine:
             temp_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2] if (crop_y2 > crop_y1 and crop_x2 > crop_x1) else None
 
             with self.lock:
-                # Spatial IoU inheritance across track swaps
-                if track_id not in self.active_tracks:
-                    best_iou = 0.0
-                    inherited_name = None
-                    for old_tid, old_info in list(self.recent_track_history.items()):
-                        if current_frame_num - old_info["last_seen"] <= 45 and old_info.get("confirmed", False):
-                            name_cand = old_info.get("name", "")
-                            old_sess = self._sessions.get(old_tid)
-                            is_valid_cand = (old_sess and old_sess.status == TrackStatus.CONFIRMED) or (
-                                name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"]
-                                and not str(name_cand).startswith("Scanning")
-                                and not str(name_cand).startswith("Contended")
-                            )
-                            if is_valid_cand:
-                                iou_val = compute_box_iou(curr_box, old_info["box"])
-                                if iou_val > best_iou:
-                                    best_iou = iou_val
-                                    inherited_name = name_cand
-
-                    if best_iou >= 0.40 and inherited_name is not None:
-                        self.active_tracks[track_id] = inherited_name
-                        t_c = self.track_cache.setdefault(track_id, {})
-                        t_c["name"] = inherited_name
-                        t_c["is_confirmed"] = True
-                        t_c["best_dist"] = 0.35
-                        t_c["best_norm"] = 1.0
-                        session = self._get_or_create_session(track_id, curr_box, current_frame_num)
-                        session.confirm_identity(inherited_name, distance=0.35, norm=1.0)
-                        self.consensus.active_identity_claims[inherited_name] = track_id
-                    else:
-                        self.active_tracks[track_id] = f"Scanning Track {track_id}"
-
-                subject_name = self.active_tracks.get(track_id, f"Scanning Track {track_id}")
-                is_confirmed = self.track_cache.get(track_id, {}).get("is_confirmed", False)
-                self.recent_track_history[track_id] = {
-                    "box": curr_box,
-                    "last_seen": current_frame_num,
-                    "name": subject_name,
-                    "confirmed": is_confirmed
-                }
+                session, inherited_name = self.registry.update_frame_track(track_id, curr_box, current_frame_num)
+                if inherited_name:
+                    self.consensus.active_identity_claims[inherited_name] = track_id
+                subject_name = session.display_name
+                is_confirmed = session.is_confirmed
 
             # Biometric Scheduler Deep Seam: Governs extraction admission, cooldowns, and cadence
-            session = self._get_or_create_session(track_id, curr_box, current_frame_num)
             is_contended = (track_id in self.contended_tracks)
             if not is_contended and not is_confirmed:
-                for conf_tid, conf_info in self.recent_track_history.items():
-                    if conf_tid != track_id and conf_info.get("confirmed", False):
-                        if compute_box_iou(curr_box, conf_info["box"]) > 0.35 or compute_box_containment(curr_box, conf_info["box"]) > 0.40:
-                            is_contended = True
-                            break
+                is_contended = self.registry.check_spatial_occlusion(track_id, curr_box)
 
             crop_shape = (crop_y2 - crop_y1, crop_x2 - crop_x1) if temp_crop is not None else None
             if self.biometric_scheduler.should_extract(session, crop_shape, current_frame_num, is_contended=is_contended):
@@ -789,15 +777,10 @@ class BiometricTrackingEngine:
             # Anti-Limbo Expiration Timeout:
             # If an unconfirmed candidate has been scanning for >25 frames without any valid face detections,
             # transition from loud orange scanning alert to a muted unverified target.
-            t_cache = self.track_cache.get(track_id, {})
-            valid_face_count = session.valid_face_crops or t_cache.get("valid_face_crops", 0)
-            if is_scanning and track_age > 25 and valid_face_count == 0:
+            if is_scanning and self.registry.evaluate_anti_limbo_timeout(session, max_scanning_age=25):
                 is_unverified = True
                 is_scanning = False
-                session.status = TrackStatus.UNVERIFIED
-                subject_name = f"Unverified ID {track_id}"
-                with self.lock:
-                    self.active_tracks[track_id] = subject_name
+                subject_name = session.display_name
 
             # Metadata resolution
             meta_dict = {}
@@ -812,7 +795,6 @@ class BiometricTrackingEngine:
                  (TrackStatus.SCANNING.value if is_scanning else
                   (TrackStatus.UNKNOWN.value if is_unknown else TrackStatus.CONFIRMED.value)))
             )
-            session = self._get_or_create_session(track_id, curr_box, current_frame_num)
             session.status = TrackStatus(curr_status)
             session.confidence = 0.85 if is_confirmed else 0.50
             session.identity_name = f"Contended Track {track_id}" if is_contended_flag else (subject_name if is_confirmed and not is_unknown else (subject_name if not is_scanning else ""))
@@ -827,16 +809,7 @@ class BiometricTrackingEngine:
 
         # 5. Purge Expired Tracks (> 60 frames dead, or persistent headless phantom > 45 frames)
         with self.lock:
-            expired_ids = []
-            for tid, last_seen in list(self.track_last_seen.items()):
-                age = (current_frame_num - self.track_first_seen.get(tid, current_frame_num)) + 1
-                t_c = self.track_cache.get(tid, {})
-                if current_frame_num - last_seen > 60:
-                    expired_ids.append(tid)
-                elif not t_c.get("is_confirmed", False) and t_c.get("valid_face_crops", 0) == 0 and age > 45:
-                    expired_ids.append(tid)
-
-            for tid in expired_ids:
+            for tid in self.registry.find_expired_tracks(current_frame_num):
                 self.purge_track(tid)
 
         # 6. Visual Overlay HUD Rendering
@@ -1028,15 +1001,41 @@ class BiometricTrackingEngine:
 
             if telemetry.get("confirmed") and display_name not in ["Unknown", "Ambiguous Match", "Unknown Person"]:
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-                last_event_frame = self.identified_cooldowns.get(display_name, 0)
-                if self.frame_count - last_event_frame > self.cooldown_frames:
-                    self.identified_cooldowns[display_name] = self.frame_count
-                    dist1 = telemetry.get("dist1", 0.0)
-                    self.encrypted_audit_logger.log_event(now_str, track_id, display_name, dist1)
+                dist1 = float(telemetry.get("dist1", 0.0))
+
+                # Atomic Domain Event Dispatch across IdentityObserver seam
+                event = IdentityConfirmedEvent(
+                    track_id=track_id,
+                    person_name=display_name,
+                    match_distance=dist1,
+                    timestamp_str=now_str,
+                    frame_num=self.frame_count,
+                    metadata={"norm": float(telemetry.get("norm", 1.0))}
+                )
+                self.identity_dispatcher.dispatch(event)
 
     # -----------------------------------------------------------------
     # Telemetry, Snapshot & Mode Interfaces
     # -----------------------------------------------------------------
+
+    def register_identity_observer(self, observer: IdentityObserver) -> None:
+        """Registers a listener for verified subject identity confirmation events."""
+        self.identity_dispatcher.register(observer)
+
+    def unregister_identity_observer(self, observer: IdentityObserver) -> None:
+        """Unregisters an observer from subject identity events."""
+        self.identity_dispatcher.unregister(observer)
+
+    def set_attendance_service(self, service: Any) -> None:
+        """Hooks automated attendance service to the engine via AttendanceIdentityObserver."""
+        with self.lock:
+            self.attendance_service = service
+            if self._attendance_observer is not None:
+                self.identity_dispatcher.unregister(self._attendance_observer)
+                self._attendance_observer = None
+            if service is not None:
+                self._attendance_observer = AttendanceIdentityObserver(service)
+                self.identity_dispatcher.register(self._attendance_observer)
 
     def get_active_tracks(self) -> List[TrackedSubject]:
         """Thread-safe snapshot of currently active subjects."""

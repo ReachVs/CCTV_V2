@@ -139,9 +139,11 @@ class TrackingPreFilter:
                     pass
 
         # 2. Pose Keypoints Fallback (0: Nose, 1..2: Eyes, 3..4: Ears, 5..6: Shoulders)
-        if self.pose_estimator is not None and getattr(self.pose_estimator, "yolo_pose", None) is not None:
+        pe = self.pose_estimator() if callable(self.pose_estimator) else self.pose_estimator
+        if pe is not None and getattr(pe, "yolo_pose", None) is not None:
             try:
-                kpts = self.pose_estimator.estimate_pose_keypoints(frame, box)
+                kpts = pe.estimate_pose_keypoints(frame, box)
+
                 if kpts and len(kpts) > 0:
                     for kp in kpts:
                         k_id = kp.get("id", -1)

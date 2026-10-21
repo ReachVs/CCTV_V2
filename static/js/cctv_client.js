@@ -38,16 +38,24 @@ class CCTVClient {
         this.initEventListeners();
         this.startTelemetryPollingFallback();
         this.fetchInitialStats();
+        this.fetchAttendanceConfig();
+        this.fetchAttendanceChecklist();
     }
 
     startClock() {
         const update = () => {
             const now = new Date();
+            const cambodiaTz = 'Asia/Phnom_Penh';
             if (this.clockTimeEl) {
-                this.clockTimeEl.textContent = now.toLocaleTimeString('en-US', { hour12: false }) + ' ICT';
+                this.clockTimeEl.textContent = now.toLocaleTimeString('en-GB', {
+                    timeZone: cambodiaTz,
+                    hour12: false
+                }) + ' ICT';
             }
             if (this.clockDateEl) {
-                this.clockDateEl.textContent = now.toISOString().split('T')[0];
+                this.clockDateEl.textContent = now.toLocaleDateString('en-CA', {
+                    timeZone: cambodiaTz
+                });
             }
         };
         update();
@@ -90,14 +98,22 @@ class CCTVClient {
                 gain.gain.exponentialRampToValueAtTime(0.001, now + 0.25);
                 osc.start(now);
                 osc.stop(now + 0.25);
-            } else if (type === 'alert') {
-                osc.type = 'triangle';
-                osc.frequency.setValueAtTime(220, now);
-                osc.frequency.setValueAtTime(196, now + 0.08);
-                gain.gain.setValueAtTime(0.06, now);
-                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.3);
+            } else if (type === 'tap' || type === 'click') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(1400, now);
+                osc.frequency.exponentialRampToValueAtTime(800, now + 0.015);
+                gain.gain.setValueAtTime(0.02, now);
+                gain.gain.exponentialRampToValueAtTime(0.0001, now + 0.015);
                 osc.start(now);
-                osc.stop(now + 0.3);
+                osc.stop(now + 0.015);
+            } else if (type === 'alert') {
+                osc.type = 'sine';
+                osc.frequency.setValueAtTime(320, now);
+                osc.frequency.setValueAtTime(260, now + 0.08);
+                gain.gain.setValueAtTime(0.04, now);
+                gain.gain.exponentialRampToValueAtTime(0.001, now + 0.22);
+                osc.start(now);
+                osc.stop(now + 0.22);
             }
         } catch (_) {}
     }
@@ -224,6 +240,11 @@ class CCTVClient {
                     }
                 }
             } catch (_) {}
+
+            // Periodically refresh attendance checklist
+            try {
+                await this.fetchAttendanceChecklist();
+            } catch (_) {}
         }, 1500);
     }
 
@@ -281,10 +302,12 @@ class CCTVClient {
             const roleText = meta.role || meta.occupation || (isConfirmed ? 'REGISTERED PERSONNEL' : 'UNIDENTIFIED SUBJECT');
             const avatarSrc = isConfirmed ? `/api/subject/avatar/${encodeURIComponent(name)}` : '/logo.png';
 
-            // Audio notification on new verified identification
+            // Audio notification and immediate attendance check-in update on new verified identification
             if (isConfirmed && !this.lastAuditedTracks.has(trackId)) {
                 this.lastAuditedTracks.add(trackId);
                 this.playTacticalChime('verified');
+                // Trigger immediate checklist refresh to mark subject as PRESENT without polling delay
+                this.fetchAttendanceChecklist();
             }
 
             const barColorClass = confidencePct >= 75 ? '' : (confidencePct >= 50 ? 'warn' : 'alert');
@@ -680,6 +703,76 @@ class CCTVClient {
             this.telemetryContainer.addEventListener('mouseleave', () => { this._isHoveringTelemetry = false; });
         }
 
+        // Attendance Save Schedule button (Class Start & End)
+        const saveCutoffBtn = document.getElementById('att-btn-save-cutoff');
+        const startInput = document.getElementById('att-start-time-input') || document.getElementById('att-time-input');
+        const endInput = document.getElementById('att-end-time-input');
+        const graceInput = document.getElementById('att-grace-input');
+        if (saveCutoffBtn) {
+            const handleSave = () => {
+                const startVal = startInput ? startInput.value : '18:00';
+                const endVal = endInput ? endInput.value : '21:00';
+                const grace = parseInt(graceInput ? graceInput.value : '15', 10) || 0;
+                if (startVal) {
+                    this.saveAttendanceConfig(startVal, endVal, grace);
+                }
+            };
+            saveCutoffBtn.addEventListener('click', handleSave);
+            if (startInput) {
+                startInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') handleSave();
+                });
+            }
+            if (endInput) {
+                endInput.addEventListener('keydown', (e) => {
+                    if (e.key === 'Enter') handleSave();
+                });
+            }
+        }
+
+        // Attendance Check All button
+        const checkAllBtn = document.getElementById('att-btn-check-all');
+        if (checkAllBtn) {
+            checkAllBtn.addEventListener('click', () => {
+                this.checkAllAttendance('PRESENT');
+            });
+        }
+
+        // Attendance Reset button
+        const resetAttBtn = document.getElementById('att-btn-reset');
+        if (resetAttBtn) {
+            resetAttBtn.addEventListener('click', () => {
+                if (confirm("Are you sure you want to reset today's attendance checklist?")) {
+                    this.resetAttendance();
+                }
+            });
+        }
+
+        // Delegated click for manual attendance status toggling and row checkmarks
+        const rosterContainer = document.getElementById('attendance-roster-list');
+        if (rosterContainer) {
+            rosterContainer.addEventListener('click', (e) => {
+                const checkBtn = e.target.closest('.att-check-toggle');
+                if (checkBtn) {
+                    const name = checkBtn.getAttribute('data-name');
+                    const curStatus = checkBtn.getAttribute('data-status');
+                    if (name) {
+                        this.manualToggleAttendance(name, curStatus || 'ABSENT');
+                    }
+                    return;
+                }
+
+                const btn = e.target.closest('.att-status-toggle');
+                if (btn) {
+                    const name = btn.getAttribute('data-name');
+                    const curStatus = btn.getAttribute('data-status');
+                    if (name && curStatus) {
+                        this.manualToggleAttendance(name, curStatus);
+                    }
+                }
+            });
+        }
+
         // ESC key to close modal or drawer, Arrow keys to slide images
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
@@ -699,6 +792,265 @@ class CCTVClient {
                 }
             }
         });
+    }
+
+    async fetchAttendanceConfig() {
+        try {
+            const res = await fetch('/api/attendance/config');
+            if (res.ok) {
+                const data = await res.json();
+                const startTime = data.class_start_time || data.cutoff_time || '18:00:00';
+                const endTime = data.class_end_time || '21:00:00';
+
+                const schedDisplay = document.getElementById('att-schedule-display');
+                if (schedDisplay) {
+                    schedDisplay.textContent = `${startTime.slice(0, 5)} - ${endTime.slice(0, 5)}`;
+                }
+                const cutoffDisplay = document.getElementById('att-cutoff-display');
+                if (cutoffDisplay) {
+                    cutoffDisplay.textContent = startTime;
+                }
+
+                const startInput = document.getElementById('att-start-time-input') || document.getElementById('att-time-input');
+                if (startInput && document.activeElement !== startInput) {
+                    startInput.value = startTime.slice(0, 5); // HH:MM
+                }
+                const endInput = document.getElementById('att-end-time-input');
+                if (endInput && document.activeElement !== endInput) {
+                    endInput.value = endTime.slice(0, 5); // HH:MM
+                }
+                const graceInput = document.getElementById('att-grace-input');
+                if (graceInput && data.grace_period_minutes !== undefined && document.activeElement !== graceInput) {
+                    graceInput.value = data.grace_period_minutes;
+                }
+            }
+        } catch (err) {
+            console.warn('[CCTVClient] Error fetching attendance config:', err);
+        }
+    }
+
+    async saveAttendanceConfig(startTime, endTime = null, graceMinutes = 0) {
+        try {
+            const payload = {
+                class_start_time: startTime,
+                class_end_time: endTime || '21:00:00',
+                cutoff_time: startTime,
+                grace_period_minutes: graceMinutes
+            };
+            const res = await fetch('/api/attendance/config', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify(payload)
+            });
+            if (res.ok) {
+                const data = await res.json();
+                const st = data.class_start_time || startTime;
+                const et = data.class_end_time || endTime || '11:30:00';
+                const schedDisplay = document.getElementById('att-schedule-display');
+                if (schedDisplay) {
+                    schedDisplay.textContent = `${st.slice(0, 5)} - ${et.slice(0, 5)}`;
+                }
+                const cutoffDisplay = document.getElementById('att-cutoff-display');
+                if (cutoffDisplay) {
+                    cutoffDisplay.textContent = st;
+                }
+                await this.fetchAttendanceChecklist();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                alert(`Error setting schedule: ${errData.detail || 'Invalid format'}`);
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error saving attendance config:', err);
+        }
+    }
+
+    async checkAllAttendance(status = 'PRESENT') {
+        if (this._isAttendanceBusy) return;
+        this._isAttendanceBusy = true;
+        try {
+            const res = await fetch('/api/attendance/check-all', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ status })
+            });
+            if (res.ok) {
+                await this.fetchAttendanceChecklist();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                alert(`Error marking all students: ${errData.detail || 'Operation failed'}`);
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error in checkAllAttendance:', err);
+        } finally {
+            this._isAttendanceBusy = false;
+        }
+    }
+
+    async fetchAttendanceChecklist() {
+        try {
+            const res = await fetch('/api/attendance/checklist');
+            if (res.ok) {
+                const data = await res.json();
+                this.renderAttendanceChecklist(data);
+            }
+        } catch (err) {
+            console.warn('[CCTVClient] Error fetching attendance checklist:', err);
+        }
+    }
+
+    renderAttendanceChecklist(data) {
+        if (!data) return;
+
+        // Update KPIs
+        const presEl = document.getElementById('att-stat-present');
+        if (presEl) presEl.textContent = data.present_count || 0;
+
+        const lateEl = document.getElementById('att-stat-late');
+        if (lateEl) lateEl.textContent = data.late_count || 0;
+
+        const absEl = document.getElementById('att-stat-absent');
+        if (absEl) absEl.textContent = data.absent_count || 0;
+
+        // Total enrolled students (replaces attendance rate percentage)
+        const totalEl = document.getElementById('att-stat-total');
+        if (totalEl) totalEl.textContent = data.total_enrolled || 0;
+
+        // Top bar metric pill: show attended count / total enrolled students
+        const topRatePill = document.getElementById('stat-attendance-rate');
+        if (topRatePill) {
+            const attended = (data.present_count || 0) + (data.late_count || 0);
+            topRatePill.textContent = `${attended} / ${data.total_enrolled || 0}`;
+        }
+
+        const dateLbl = document.getElementById('att-date-label');
+        if (dateLbl && data.date) dateLbl.textContent = data.date;
+
+        const schedDisplay = document.getElementById('att-schedule-display');
+        if (schedDisplay && data.class_start_time && data.class_end_time) {
+            schedDisplay.textContent = `${data.class_start_time.slice(0, 5)} - ${data.class_end_time.slice(0, 5)}`;
+        }
+        const cutoffDisplay = document.getElementById('att-cutoff-display');
+        if (cutoffDisplay && (data.class_start_time || data.cutoff_time)) {
+            cutoffDisplay.textContent = data.class_start_time || data.cutoff_time;
+        }
+
+        const rosterContainer = document.getElementById('attendance-roster-list');
+        if (!rosterContainer) return;
+
+        if (!data.checklist || data.checklist.length === 0) {
+            rosterContainer.innerHTML = `
+                <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);">
+                    NO ENROLLED STUDENTS FOUND IN DATABASE
+                </div>
+            `;
+            return;
+        }
+
+        const rowsHtml = data.checklist.map(item => {
+            const isPresent = item.status === 'PRESENT';
+            const isLate = item.status === 'LATE';
+            const isAbsent = item.status === 'ABSENT';
+
+            let badgeBg = 'rgba(255,255,255,0.06)';
+            let badgeColor = '#94a3b8';
+            let badgeBorder = 'rgba(255,255,255,0.12)';
+            let iconSvg = '';
+            let checkToggleClass = 'unchecked';
+            let checkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>`;
+
+            if (isPresent) {
+                badgeBg = 'rgba(16, 185, 129, 0.15)';
+                badgeColor = 'var(--emerald-verified)';
+                badgeBorder = 'rgba(16, 185, 129, 0.4)';
+                iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`;
+                checkToggleClass = 'checked';
+                checkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`;
+            } else if (isLate) {
+                badgeBg = 'rgba(245, 158, 11, 0.15)';
+                badgeColor = 'var(--amber-warning)';
+                badgeBorder = 'rgba(245, 158, 11, 0.4)';
+                iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
+                checkToggleClass = 'checked-late';
+                checkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`;
+            } else {
+                badgeBg = 'rgba(244, 63, 94, 0.08)';
+                badgeColor = '#f87171';
+                badgeBorder = 'rgba(244, 63, 94, 0.25)';
+                iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+            }
+
+            const avatarUrl = `/api/subject/avatar/${encodeURIComponent(item.person_name)}`;
+            const timeDisplay = item.check_in_time || '--:--:--';
+            const occupationDisplay = (item.occupation && item.occupation !== 'SECURITY SPECIALIST') ? this.escapeHtml(item.occupation) : 'STUDENT';
+
+            return `
+                <div class="attendance-student-row">
+                    <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
+                        <button type="button" class="att-check-toggle ${checkToggleClass}" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Attended check: Click to toggle attendance for ${this.escapeHtml(item.person_name)}">
+                            ${checkIcon}
+                        </button>
+                        <img src="${avatarUrl}" alt="${this.escapeHtml(item.person_name)}" style="width: 26px; height: 26px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border-medium); background: #000; flex-shrink: 0;" onerror="this.src='/logo.png'">
+                        <div style="min-width: 0;">
+                            <div style="font-size: 0.74rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
+                                ${this.escapeHtml(item.person_name)}
+                            </div>
+                            <div style="font-size: 0.62rem; color: var(--text-muted); font-family: var(--font-mono);">
+                                ${occupationDisplay}
+                            </div>
+                        </div>
+                    </div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span style="font-family: var(--font-mono); font-size: 0.68rem; color: ${item.check_in_time ? 'var(--text-secondary)' : 'var(--text-muted)'};">
+                            ${timeDisplay}
+                        </span>
+                        <button type="button" class="att-status-toggle" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Click to manually cycle attendance status" style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder};">
+                            ${iconSvg}
+                            ${item.status}
+                        </button>
+                    </div>
+                </div>
+            `;
+        }).join('');
+
+        rosterContainer.innerHTML = rowsHtml;
+    }
+
+    async manualToggleAttendance(personName, currentStatus) {
+        if (this._isAttendanceBusy) return;
+        this._isAttendanceBusy = true;
+        // Toggle sequence: ABSENT -> PRESENT -> LATE -> ABSENT
+        let nextStatus = 'PRESENT';
+        if (currentStatus === 'PRESENT') nextStatus = 'LATE';
+        else if (currentStatus === 'LATE') nextStatus = 'ABSENT';
+
+        try {
+            const res = await fetch('/api/attendance/manual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    person_name: personName,
+                    status: nextStatus
+                })
+            });
+            if (res.ok) {
+                await this.fetchAttendanceChecklist();
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error manually toggling attendance:', err);
+        } finally {
+            this._isAttendanceBusy = false;
+        }
+    }
+
+    async resetAttendance() {
+        try {
+            const res = await fetch('/api/attendance/reset', { method: 'POST' });
+            if (res.ok) {
+                await this.fetchAttendanceChecklist();
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error resetting attendance:', err);
+        }
     }
 }
 

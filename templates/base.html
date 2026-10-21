@@ -4,8 +4,8 @@
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>{% block title %}SLEEPER AGENT // Defense-Grade CCTV Biometric Platform{% endblock %}</title>
-    <!-- Modern Design System -->
-    <link rel="stylesheet" href="/static/css/design_system.css?v=20261013_09">
+    <!-- Modern Apple Fluid Design System -->
+    <link rel="stylesheet" href="/static/css/design_system.css?v=20261021_apple">
     {% block head %}{% endblock %}
 </head>
 <body>
@@ -55,9 +55,13 @@
                 <div class="val" id="stat-tracks">0</div>
                 <div class="lbl">ACTIVE TRACKS</div>
             </div>
+            <div class="metric-pill" style="border-color: rgba(16, 185, 129, 0.3);">
+                <div class="val" id="stat-attendance-rate" style="color: var(--emerald-verified);">0 / 0</div>
+                <div class="lbl">ATTENDED / TOTAL</div>
+            </div>
             <div class="system-clock">
-                <div class="time" id="clock-time">00:00:00 ICT</div>
-                <div class="date" id="clock-date">2026-10-06</div>
+                <div class="time" id="clock-time">18:00:00 ICT</div>
+                <div class="date" id="clock-date">2026-10-21</div>
             </div>
         </div>
     </header>
@@ -72,6 +76,7 @@
          ====================================================================== -->
     <div class="drawer-backdrop" id="drawer-backdrop"></div>
     <aside class="slide-over-drawer" id="enrollment-drawer" aria-label="Biometric Enrollment Drawer">
+        <div class="drawer-drag-handle" id="drawer-drag-handle" title="Drag to close"></div>
         <div class="drawer-header">
             <h2>
                 <svg width="20" height="20" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-accent)" stroke-width="2"><path d="M16 21v-2a4 4 0 0 0-4-4H5a4 4 0 0 0-4 4v2"/><circle cx="8.5" cy="7" r="4"/><line x1="20" y1="8" x2="20" y2="14"/><line x1="23" y1="11" x2="17" y2="11"/></svg>
@@ -260,8 +265,8 @@
     </div>
 
     <!-- Global Client Logic -->
-    <script src="/static/js/cctv_client.js?v=20261013_09"></script>
-    <script src="/static/js/enrollment_drawer.js?v=20261013_09"></script>
+    <script src="/static/js/cctv_client.js?v=20261021_apple"></script>
+    <script src="/static/js/enrollment_drawer.js?v=20261021_apple"></script>
     <script>
         document.addEventListener('DOMContentLoaded', () => {
             window.appDrawer = new EnrollmentDrawer();

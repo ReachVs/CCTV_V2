@@ -137,14 +137,16 @@ python3 -m src.utils.tune_tracker
 ```
 
 ### 4. Launch Asynchronous Web Dashboard Server
-Start the FastAPI + WebSockets dashboard server:
+Start the real-time CCTV pipeline and FastAPI + WebSockets dashboard server:
 ```bash
-python3 -m src.api.cctv_server
-```
-Navigate to `http://localhost:8000` in your web browser.
+# Option 1: Root launcher (Recommended)
+python3 cctv_server.py
 
-### 5. Launch Live CCTV Standalone GUI
-Run the native OpenCV GUI inference pipeline:
-```bash
-python3 -m src.inference.live_cctv
+# Option 2: Direct module invocation
+python3 -m src.api.cctv_server
+
+# Option 3: With test video or specific camera index
+CAMERA_SOURCE=stress_occlusion.mp4 python3 cctv_server.py
 ```
+Navigate to [http://localhost:8000](http://localhost:8000) in your web browser to view the real-time CCTV stream, detection boxes, biometrics, and telemetry.
+

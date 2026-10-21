@@ -26,6 +26,7 @@ class EnrollmentDrawer {
 
     init() {
         this.bindDrawerTriggers();
+        this.bindGestureDismiss();
         this.bindDropzone();
         this.bindCommitAction();
     }
@@ -33,7 +34,6 @@ class EnrollmentDrawer {
     bindDrawerTriggers() {
         this.openBtns.forEach(btn => {
             btn.addEventListener('click', (e) => {
-                // If on /enroll standalone page, don't prevent navigation unless it has data-inline="true"
                 if (btn.getAttribute('data-inline') === 'true' || this.drawerEl) {
                     e.preventDefault();
                     this.open();
@@ -56,8 +56,85 @@ class EnrollmentDrawer {
         });
     }
 
+    bindGestureDismiss() {
+        if (!this.drawerEl) return;
+        const dragHandle = this.drawerEl.querySelector('.drawer-drag-handle');
+        const triggerTargets = [dragHandle, this.drawerEl.querySelector('.drawer-header')].filter(Boolean);
+        if (triggerTargets.length === 0) return;
+
+        let isDragging = false;
+        let startX = 0;
+        let history = [];
+
+        const project = (initialVelocity, decelerationRate = 0.998) => {
+            return (initialVelocity / 1000) * decelerationRate / (1 - decelerationRate);
+        };
+
+        const rubberband = (overshoot, dimension, constant = 0.55) => {
+            return (overshoot * dimension * constant) / (dimension + constant * Math.abs(overshoot));
+        };
+
+        triggerTargets.forEach(target => {
+            target.addEventListener('pointerdown', (e) => {
+                if (e.target.closest('button, input, select')) return;
+                isDragging = true;
+                startX = e.clientX;
+                history = [{ x: e.clientX, t: performance.now() }];
+                target.setPointerCapture(e.pointerId);
+                this.drawerEl.classList.add('dragging');
+            });
+
+            target.addEventListener('pointermove', (e) => {
+                if (!isDragging) return;
+                const now = performance.now();
+                history.push({ x: e.clientX, t: now });
+                if (history.length > 5) history.shift();
+
+                const rawDeltaX = e.clientX - startX;
+                const drawerWidth = this.drawerEl.offsetWidth || 500;
+
+                if (rawDeltaX >= 0) {
+                    this.drawerEl.style.transform = `translateX(${rawDeltaX}px)`;
+                } else {
+                    const rb = rubberband(rawDeltaX, drawerWidth, 0.55);
+                    this.drawerEl.style.transform = `translateX(${rb}px)`;
+                }
+            });
+
+            const handlePointerUp = (e) => {
+                if (!isDragging) return;
+                isDragging = false;
+                this.drawerEl.classList.remove('dragging');
+                try { target.releasePointerCapture(e.pointerId); } catch (_) {}
+
+                const now = performance.now();
+                let velocity = 0;
+                if (history.length >= 2) {
+                    const first = history[0];
+                    const last = history[history.length - 1];
+                    const dt = Math.max(1, last.t - first.t);
+                    velocity = ((last.x - first.x) / dt) * 1000; // px/s
+                }
+
+                const rawDeltaX = e.clientX - startX;
+                const drawerWidth = this.drawerEl.offsetWidth || 500;
+                const projectedEndpoint = rawDeltaX + project(velocity);
+
+                if (projectedEndpoint > drawerWidth * 0.35 || rawDeltaX > drawerWidth * 0.35 || velocity > 650) {
+                    this.close();
+                } else {
+                    this.drawerEl.style.transform = '';
+                }
+            };
+
+            target.addEventListener('pointerup', handlePointerUp);
+            target.addEventListener('pointercancel', handlePointerUp);
+        });
+    }
+
     open() {
         if (!this.drawerEl) return;
+        this.drawerEl.style.transform = '';
         this.drawerEl.classList.add('active');
         if (this.backdropEl) this.backdropEl.classList.add('active');
         document.body.style.overflow = 'hidden';
@@ -65,9 +142,14 @@ class EnrollmentDrawer {
 
     close() {
         if (!this.drawerEl) return;
+        this.drawerEl.style.transform = '';
         this.drawerEl.classList.remove('active');
         if (this.backdropEl) this.backdropEl.classList.remove('active');
         document.body.style.overflow = '';
+    }
+
+    closeDrawer() {
+        this.close();
     }
 
     isOpen() {

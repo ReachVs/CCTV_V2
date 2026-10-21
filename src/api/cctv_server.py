@@ -12,8 +12,10 @@ try:
 except ImportError:
     pass
 
+import re
 import sys
 import time
+from datetime import datetime
 import base64
 import binascii
 import asyncio
@@ -61,9 +63,16 @@ from src.api.schemas import (
     SystemModeRequest,
     SystemModeResponse,
     HealthResponse,
-    ReadinessResponse
+    ReadinessResponse,
+    AttendanceConfigRequest,
+    AttendanceConfigResponse,
+    AttendanceChecklistItem,
+    AttendanceChecklistResponse,
+    AttendanceManualMarkRequest,
+    AttendanceCheckAllRequest
 )
 from src.services.biometric_enrollment_manager import BiometricEnrollmentManager
+from src.services.attendance_service import AttendanceService
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -91,13 +100,21 @@ def get_safe_subject_dir(name: str) -> Optional[str]:
     clean_subfolder = clean.replace(" ", "_")
     cand_path = os.path.abspath(os.path.join(KNOWN_FACES_DIR, clean_subfolder))
     real_root = os.path.abspath(KNOWN_FACES_DIR)
-    if cand_path.startswith(real_root) and cand_path != real_root:
+    if cand_path != real_root and os.path.commonpath([real_root, cand_path]) == real_root:
         return cand_path
     return None
 
 from src.database.audit_repository import AuditRepository
 from src.database.biometric_repository import biometric_repo
 audit_repo = AuditRepository(DB_PATH)
+
+# Automated Biometric Attendance Checklist Service
+from src.domain.identity_observer import AttendanceIdentityObserver, IdentityConfirmedEvent
+attendance_service = AttendanceService(db_path=DB_PATH, biometric_repo=biometric_repo)
+if hasattr(engine, "register_identity_observer"):
+    engine.register_identity_observer(AttendanceIdentityObserver(attendance_service))
+else:
+    engine.set_attendance_service(attendance_service)
 
 # Deep Subject Enrollment Manager
 enrollment_manager = BiometricEnrollmentManager(
@@ -114,28 +131,14 @@ TEMPLATES_DIR = os.path.join(PROJECT_ROOT, "templates")
 templates = Jinja2Templates(directory=TEMPLATES_DIR if os.path.exists(TEMPLATES_DIR) else "templates")
 EVENTS_DIR = os.path.join(PROJECT_ROOT, "events")
 
-SYSTEM_MODE = "SURVEILLANCE"
-current_fps = 0.0
-fps_counter = 0
-last_fps_time = time.time()
+from src.services.stream_broadcaster import StreamBroadcaster
 
-# Unified Camera Ingestion Pool (zero driver queue latency, on-demand ref-counting)
-def _process_cctv_frame(frame: np.ndarray) -> np.ndarray:
-    global current_fps
-    if hasattr(camera_stream, "current_fps"):
-        current_fps = camera_stream.current_fps
-    if SYSTEM_MODE == "ENROLLMENT":
-        return frame
-    try:
-        res = engine.process_frame(frame, annotate=True)
-        return res.annotated_frame
-    except Exception as e:
-        print(f"[CCTV Frame Processing Warning] {e}")
-        return frame
-
-camera_stream = CameraIngestionPool(source=0, width=854, height=480, frame_processor=_process_cctv_frame)
-multi_camera_manager = camera_stream
+# Decoupled Streaming Pipeline Seam
+broadcaster = StreamBroadcaster(engine=engine, default_source=0, width=854, height=480)
+camera_stream = broadcaster.camera_stream
+multi_camera_manager = broadcaster.multi_camera_manager
 GlobalCameraStream = CameraIngestionPool
+_process_cctv_frame = broadcaster.process_frame
 
 
 def init_db():
@@ -165,15 +168,14 @@ async def lifespan(app_instance: FastAPI):
     init_db()
     sync_db_to_faiss_on_startup()
     
-    # Initialize default primary camera feed
-    multi_camera_manager.add_camera("primary", 0, width=854, height=480)
+    # Initialize default primary camera feed via StreamBroadcaster
+    broadcaster.initialize("primary", 0, width=854, height=480)
     print("[CCTV Server Lifespan] System models & primary camera ingestion pool initialized successfully.")
 
     yield
 
     print("[CCTV Server Lifespan] Shutdown signal received. Stopping camera streams & background workers...")
-    multi_camera_manager.stop_all()
-    camera_stream.stop()
+    broadcaster.shutdown()
     engine.stop()
     print("[CCTV Server Lifespan] Clean shutdown complete.")
 
@@ -201,6 +203,15 @@ async def add_security_headers(request: Request, call_next):
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
     response.headers["X-XSS-Protection"] = "1; mode=block"
     response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Content-Security-Policy"] = (
+        "default-src 'self'; "
+        "img-src 'self' data: blob:; "
+        "style-src 'self' 'unsafe-inline'; "
+        "script-src 'self' 'unsafe-inline'; "
+        "connect-src 'self' ws: wss:; "
+        "frame-ancestors 'none'; "
+        "base-uri 'self';"
+    )
     if request.url.path.startswith("/static/"):
         response.headers["Cache-Control"] = "no-cache, no-store, must-revalidate"
         response.headers["Pragma"] = "no-cache"
@@ -255,43 +266,31 @@ async def get_logo():
 
 @app.get("/api/system/mode", response_model=SystemModeResponse)
 async def get_system_mode():
-    global SYSTEM_MODE
     return SystemModeResponse(
         status="success",
-        mode=SYSTEM_MODE,
+        mode=broadcaster.system_mode,
         pose_only_mode=engine.is_pose_only
     )
 
 
 @app.post("/api/system/mode", response_model=SystemModeResponse)
 async def set_system_mode(req: SystemModeRequest):
-    global SYSTEM_MODE
-    SYSTEM_MODE = req.mode.upper()
-    if req.pose_only_mode is not None:
-        engine.set_pose_only(req.pose_only_mode)
-
-    if SYSTEM_MODE == "ENROLLMENT":
-        camera_stream.pause()
-    else:
-        camera_stream.resume()
-
+    mode = broadcaster.set_mode(req.mode, pose_only=req.pose_only_mode)
     return SystemModeResponse(
         status="success",
-        mode=SYSTEM_MODE,
+        mode=mode,
         pose_only_mode=engine.is_pose_only,
-        message=f"System switched to {SYSTEM_MODE} mode."
+        message=f"System switched to {mode} mode."
     )
 
 
 @app.api_route("/api/system/mode/enrollment", methods=["GET", "POST"])
 @app.api_route("/api/camera/pause", methods=["GET", "POST"])
 async def set_mode_enrollment():
-    global SYSTEM_MODE
-    SYSTEM_MODE = "ENROLLMENT"
-    camera_stream.pause()
+    mode = broadcaster.set_mode("ENROLLMENT")
     return SystemModeResponse(
         status="success",
-        mode=SYSTEM_MODE,
+        mode=mode,
         pose_only_mode=engine.is_pose_only,
         message="System switched to Enrollment Mode."
     )
@@ -300,12 +299,10 @@ async def set_mode_enrollment():
 @app.api_route("/api/system/mode/surveillance", methods=["GET", "POST"])
 @app.api_route("/api/camera/resume", methods=["GET", "POST"])
 async def set_mode_surveillance():
-    global SYSTEM_MODE
-    SYSTEM_MODE = "SURVEILLANCE"
-    camera_stream.resume()
+    mode = broadcaster.set_mode("SURVEILLANCE")
     return SystemModeResponse(
         status="success",
-        mode=SYSTEM_MODE,
+        mode=mode,
         pose_only_mode=engine.is_pose_only,
         message="System switched to Surveillance Mode."
     )
@@ -315,13 +312,13 @@ async def set_mode_surveillance():
 async def list_camera_streams():
     return CameraStatusResponse(
         status="success",
-        active_streams=multi_camera_manager.active_stream_ids()
+        active_streams=broadcaster.active_stream_ids()
     )
 
 
 @app.post("/api/camera/streams", response_model=CameraStatusResponse)
 async def add_camera_stream(cfg: CameraFeedConfig):
-    success = multi_camera_manager.add_camera(
+    success = broadcaster.add_camera(
         stream_id=cfg.stream_id,
         source=cfg.source,
         width=cfg.width,
@@ -331,18 +328,16 @@ async def add_camera_stream(cfg: CameraFeedConfig):
         raise HTTPException(status_code=400, detail=f"Camera stream '{cfg.stream_id}' already exists.")
     return CameraStatusResponse(
         status="success",
-        active_streams=multi_camera_manager.active_stream_ids(),
+        active_streams=broadcaster.active_stream_ids(),
         message=f"Added camera stream '{cfg.stream_id}'"
     )
 
 
 @app.get("/api/camera/frame")
 async def get_current_camera_frame():
-    frame = camera_stream.get_raw_frame()
-    ret, buf = cv2.imencode('.jpg', frame)
-    if ret:
-        b64 = base64.b64encode(buf).decode('utf-8')
-        return JSONResponse({"status": "success", "image_base64": f"data:image/jpeg;base64,{b64}"})
+    b64 = broadcaster.get_raw_frame_b64()
+    if b64:
+        return JSONResponse({"status": "success", "image_base64": b64})
     return JSONResponse(status_code=500, content={"status": "error", "message": "Failed to encode frame."})
 
 
@@ -483,6 +478,15 @@ async def enroll_subject_api(req: FaceEnrollmentRequest):
     return await commit_enrollment_api(commit_req)
 
 
+@app.get("/api/stats")
+async def get_system_stats():
+    return {
+        "status": "success",
+        "registered_faces": int(engine.ntotal),
+        "fps": float(broadcaster.current_fps)
+    }
+
+
 @app.get("/api/events", response_model=TelemetryResponse)
 @app.get("/api/telemetry", response_model=TelemetryResponse)
 async def get_audit_events():
@@ -521,7 +525,7 @@ async def get_audit_events():
             events=events,
             active_tracks=active_list,
             total_profiles=total_profiles,
-            fps=float(current_fps)
+            fps=float(broadcaster.current_fps)
         )
     except Exception as e:
         return TelemetryResponse(
@@ -529,9 +533,138 @@ async def get_audit_events():
             events=[],
             active_tracks=[],
             total_profiles=0,
-            fps=float(current_fps),
+            fps=float(broadcaster.current_fps),
             message=str(e)
         )
+
+
+# =====================================================================
+# Attendance Checklist & Scheduling Endpoints
+# =====================================================================
+
+@app.get("/api/attendance/config", response_model=AttendanceConfigResponse)
+async def get_attendance_config():
+    """Returns active attendance schedule, class start/end times, and grace period."""
+    try:
+        cfg = attendance_service.get_config()
+        return AttendanceConfigResponse(
+            status="success",
+            class_start_time=cfg.get("class_start_time", "18:00:00"),
+            class_end_time=cfg.get("class_end_time", "21:00:00"),
+            cutoff_time=cfg["cutoff_time"],
+            grace_period_minutes=cfg["grace_period_minutes"],
+            current_time=cfg["current_time"],
+            today=cfg["today"]
+        )
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/attendance/config", response_model=AttendanceConfigResponse)
+async def set_attendance_config(req: AttendanceConfigRequest):
+    """Sets class start time, end time, and optional grace period."""
+    try:
+        start_time = req.class_start_time or req.cutoff_time
+        if not start_time:
+            raise HTTPException(status_code=400, detail="class_start_time or cutoff_time is required.")
+        res = attendance_service.set_schedule(
+            class_start_time=start_time,
+            class_end_time=req.class_end_time,
+            grace_period_minutes=req.grace_period_minutes or 0
+        )
+        cfg = attendance_service.get_config()
+        return AttendanceConfigResponse(
+            status="success",
+            class_start_time=res.get("class_start_time", "18:00:00"),
+            class_end_time=res.get("class_end_time", "21:00:00"),
+            cutoff_time=res["cutoff_time"],
+            grace_period_minutes=res["grace_period_minutes"],
+            current_time=cfg["current_time"],
+            today=cfg["today"],
+            message=res["message"]
+        )
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=str(e))
+
+
+@app.post("/api/attendance/check-all")
+async def check_all_attendance(req: AttendanceCheckAllRequest):
+    """Marks attendance status (e.g. PRESENT) for all enrolled students."""
+    status = (req.status or "PRESENT").upper()
+    if status not in ("PRESENT", "LATE", "ABSENT"):
+        raise HTTPException(status_code=400, detail="Status must be PRESENT, LATE, or ABSENT.")
+    if req.date:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", req.date.strip()):
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+    try:
+        res = attendance_service.check_all(
+            status=status,
+            date_str=req.date.strip() if req.date else None
+        )
+        return JSONResponse(content=res)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to mark attendance for all students.")
+
+
+@app.get("/api/attendance/checklist", response_model=AttendanceChecklistResponse)
+async def get_attendance_checklist(date: Optional[str] = None):
+    """Retrieves full attendance checklist for today (or specified date: YYYY-MM-DD)."""
+    if date:
+        date = date.strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+    try:
+        res = attendance_service.get_daily_checklist(date_str=date)
+        return AttendanceChecklistResponse(**res)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to retrieve attendance checklist.")
+
+
+@app.post("/api/attendance/manual")
+async def manual_mark_attendance(req: AttendanceManualMarkRequest):
+    """Manually marks attendance status (PRESENT, LATE, ABSENT) for an individual."""
+    clean_name = req.person_name.strip()
+    if not clean_name or len(clean_name) > 100:
+        raise HTTPException(status_code=400, detail="Invalid person name. Must be 1 to 100 characters.")
+    if req.status.upper() not in ("PRESENT", "LATE", "ABSENT"):
+        raise HTTPException(status_code=400, detail="Status must be PRESENT, LATE, or ABSENT.")
+    if req.date:
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", req.date.strip()):
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+    try:
+        res = attendance_service.manual_mark(
+            person_name=clean_name,
+            status=req.status.upper(),
+            date_str=req.date.strip() if req.date else None,
+            custom_time=req.custom_time.strip() if req.custom_time else None
+        )
+        return JSONResponse(content=res)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to update manual attendance status.")
+
+
+@app.post("/api/attendance/reset")
+async def reset_attendance(date: Optional[str] = None):
+    """Resets attendance records for today or the specified date."""
+    if date:
+        date = date.strip()
+        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
+            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
+    try:
+        res = attendance_service.reset_daily_attendance(date_str=date)
+        return JSONResponse(content=res)
+    except ValueError as ve:
+        raise HTTPException(status_code=400, detail=str(ve))
+    except Exception as e:
+        raise HTTPException(status_code=500, detail="Failed to reset daily attendance.")
 
 
 @app.get("/api/subject/avatar/{name}")
@@ -608,84 +741,22 @@ async def get_subject_dossier(name: str):
 @app.websocket("/ws/raw_video")
 async def websocket_raw_video_endpoint(websocket: WebSocket):
     await websocket.accept()
-    camera_stream.acquire()
-    try:
-        while True:
-            raw_frame = camera_stream.get_raw_frame()
-            ret_encode, buffer = cv2.imencode('.jpg', raw_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 85])
-            if not ret_encode:
-                await asyncio.sleep(0.02)
-                continue
-
-            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
-            payload = {
-                "image": f"data:image/jpeg;base64,{jpg_as_text}",
-                "fps": float(current_fps)
-            }
-            await websocket.send_json(payload)
-            await asyncio.sleep(0.015)
-    except (WebSocketDisconnect, asyncio.CancelledError):
-        pass
-    finally:
-        camera_stream.release()
+    await broadcaster.stream_raw_websocket(websocket)
 
 
 @app.websocket("/ws/video")
 async def websocket_video_endpoint(websocket: WebSocket):
     await websocket.accept()
-    camera_stream.acquire()
-    try:
-        while True:
-            processed_frame = camera_stream.get_processed_frame()
-            ret_encode, buffer = cv2.imencode('.jpg', processed_frame, [int(cv2.IMWRITE_JPEG_QUALITY), 75])
-            if not ret_encode:
-                await asyncio.sleep(0.02)
-                continue
-
-            jpg_as_text = base64.b64encode(buffer).decode('utf-8')
-            
-            active_list = [
-                {
-                    "track_id": s.track_id,
-                    "name": s.name,
-                    "match_distance": 0.45,
-                    "meta": s.meta
-                }
-                for s in engine.get_active_tracks()
-            ]
-
-            payload = {
-                "image": f"data:image/jpeg;base64,{jpg_as_text}",
-                "fps": float(current_fps),
-                "active_tracks": active_list
-            }
-            await websocket.send_json(payload)
-            await asyncio.sleep(0.015)
-    except (WebSocketDisconnect, asyncio.CancelledError):
-        pass
-    finally:
-        camera_stream.release()
+    await broadcaster.stream_processed_websocket(websocket)
 
 
 @app.get("/video_feed")
 async def mjpeg_fallback():
     """MJPEG HTTP Streaming Fallback for Web Dashboard"""
-    def generate():
-        camera_stream.acquire()
-        try:
-            while True:
-                proc = camera_stream.get_processed_frame()
-                ret_encode, buffer = cv2.imencode('.jpg', proc, [int(cv2.IMWRITE_JPEG_QUALITY), 80])
-                if not ret_encode:
-                    time.sleep(0.02)
-                    continue
-                yield (b'--frame\r\n'
-                       b'Content-Type: image/jpeg\r\n\r\n' + buffer.tobytes() + b'\r\n')
-                time.sleep(0.03)
-        finally:
-            camera_stream.release()
-
-    return StreamingResponse(generate(), media_type="multipart/x-mixed-replace; boundary=frame")
+    return StreamingResponse(
+        broadcaster.mjpeg_frame_generator(),
+        media_type="multipart/x-mixed-replace; boundary=frame"
+    )
 
 
 def find_available_port(start_port=8000, max_attempts=10):

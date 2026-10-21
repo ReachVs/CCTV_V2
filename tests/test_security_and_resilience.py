@@ -137,6 +137,49 @@ class TestSecurityAndResilience(unittest.TestCase):
         subjects = self.repo.get_all_subjects()
         self.assertEqual(len(subjects), 10)
 
+    def test_audit_key_file_permissions(self):
+        """Verify generated .audit_key is created with restricted 0o600 permissions."""
+        import stat
+        from src.database.audit_repository import EncryptedWALAuditLogger
+        test_db = os.path.join(self.temp_dir.name, "perms_test.db")
+        logger = EncryptedWALAuditLogger(db_path=test_db)
+        key_file = os.path.join(self.temp_dir.name, ".audit_key")
+        self.assertTrue(os.path.exists(key_file))
+        mode = stat.S_IMODE(os.stat(key_file).st_mode)
+        self.assertEqual(mode, 0o600)
+        logger.stop()
+
+    def test_security_headers_middleware(self):
+        """Verify comprehensive defensive security headers (CSP, X-Frame-Options, etc.)."""
+        import asyncio
+        from unittest.mock import AsyncMock
+        from fastapi import Response
+        from src.api.cctv_server import add_security_headers
+
+        mock_req = AsyncMock()
+        mock_req.url.path = "/dashboard"
+
+        async def dummy_call_next(req):
+            return Response(content="ok")
+
+        resp = asyncio.run(add_security_headers(mock_req, dummy_call_next))
+        self.assertEqual(resp.headers.get("X-Content-Type-Options"), "nosniff")
+        self.assertEqual(resp.headers.get("X-Frame-Options"), "SAMEORIGIN")
+        self.assertEqual(resp.headers.get("X-XSS-Protection"), "1; mode=block")
+        self.assertEqual(resp.headers.get("Referrer-Policy"), "strict-origin-when-cross-origin")
+        self.assertIn("Content-Security-Policy", resp.headers)
+        self.assertIn("default-src 'self'", resp.headers["Content-Security-Policy"])
+
+    def test_prefix_collision_defense(self):
+        """Verify prefix collisions outside KNOWN_FACES_DIR are rejected."""
+        root_base = os.path.basename(KNOWN_FACES_DIR)
+        # Attempt to target a sibling directory like known_faces_leak
+        payload = f"{root_base}_leak"
+        res = get_safe_subject_dir(payload)
+        # Result must either be None or live strictly inside KNOWN_FACES_DIR
+        if res is not None:
+            self.assertEqual(os.path.commonpath([KNOWN_FACES_DIR, res]), KNOWN_FACES_DIR)
+
 
 if __name__ == "__main__":
     unittest.main()

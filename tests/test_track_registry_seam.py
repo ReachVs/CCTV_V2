@@ -113,6 +113,90 @@ class TestTrackRegistrySeam(unittest.TestCase):
 
         self.assertTrue(len(registry) >= 0)
 
+    def test_spatial_iou_inheritance(self):
+        registry = TrackRegistry()
+        box_a = (100, 100, 200, 200)
+
+        # 1. Subject 1 established and confirmed
+        sess1, inherited = registry.update_frame_track(track_id=1, box=box_a, current_frame=10)
+        self.assertIsNone(inherited)
+        registry.confirm_track_identity(1, "Alice", dist=0.3)
+
+        # Update subject 1 at frame 20
+        registry.update_frame_track(track_id=1, box=box_a, current_frame=20)
+
+        # Purge subject 1 (e.g. tracker drop)
+        # Note: recent_track_history retains recent confirmed info if populated
+        registry.recent_track_history[1] = {
+            "box": box_a,
+            "last_seen": 20,
+            "name": "Alice",
+            "confirmed": True,
+        }
+
+        # Track 2 appears at frame 30 with high IoU (overlap > 0.40)
+        box_b = (105, 105, 205, 205)
+        sess2, inherited = registry.update_frame_track(track_id=2, box=box_b, current_frame=30)
+        self.assertEqual(inherited, "Alice")
+        self.assertEqual(sess2.display_name, "Alice")
+        self.assertTrue(sess2.is_confirmed)
+
+    def test_spatial_occlusion_checking(self):
+        registry = TrackRegistry()
+        box_confirmed = (100, 100, 300, 400)
+        registry.recent_track_history[10] = {
+            "box": box_confirmed,
+            "last_seen": 50,
+            "name": "Bob",
+            "confirmed": True,
+        }
+
+        # Overlapping unconfirmed box (high IoU or containment)
+        overlapping_box = (150, 150, 280, 380)
+        self.assertTrue(registry.check_spatial_occlusion(track_id=20, box=overlapping_box))
+
+        # Distant non-overlapping box
+        distant_box = (500, 500, 700, 800)
+        self.assertFalse(registry.check_spatial_occlusion(track_id=20, box=distant_box))
+
+    def test_anti_limbo_timeout(self):
+        registry = TrackRegistry()
+        sess = registry.get_or_create(5, (50, 50, 100, 100), current_frame=1)
+        sess.last_seen = 30  # track_age = 30
+
+        # Scanning candidate with 0 valid face crops and age > 25 -> triggers unverified transition
+        triggered = registry.evaluate_anti_limbo_timeout(sess, max_scanning_age=25)
+        self.assertTrue(triggered)
+        self.assertEqual(sess.status, TrackStatus.UNVERIFIED)
+        self.assertEqual(sess.display_name, "Unverified ID 5")
+
+        # Confirmed track -> should not transition
+        sess_conf = registry.get_or_create(6, (50, 50, 100, 100), current_frame=1)
+        sess_conf.last_seen = 30
+        sess_conf.confirm_identity("Alice", 0.3)
+        self.assertFalse(registry.evaluate_anti_limbo_timeout(sess_conf, max_scanning_age=25))
+
+    def test_find_expired_tracks(self):
+        registry = TrackRegistry()
+        # Track 1: dead track (last seen frame 10, current frame 80 -> gap 70 > 60)
+        s1 = registry.get_or_create(1, (10, 10, 50, 50), current_frame=10)
+        s1.last_seen = 10
+
+        # Track 2: persistent headless phantom (first_seen 1, last_seen 50, age 50 > 45, 0 face crops, unconfirmed)
+        s2 = registry.get_or_create(2, (20, 20, 60, 60), current_frame=1)
+        s2.last_seen = 50
+        s2.valid_face_crops = 0
+
+        # Track 3: healthy confirmed track (last seen 75)
+        s3 = registry.get_or_create(3, (30, 30, 70, 70), current_frame=1)
+        s3.last_seen = 75
+        s3.confirm_identity("Charlie", 0.25)
+
+        expired = registry.find_expired_tracks(current_frame=80)
+        self.assertIn(1, expired)
+        self.assertIn(2, expired)
+        self.assertNotIn(3, expired)
+
 
 if __name__ == "__main__":
     unittest.main()

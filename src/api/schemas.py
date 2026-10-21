@@ -119,3 +119,61 @@ class ReadinessResponse(BaseSchema):
     cameras_running: bool
     total_profiles: int
     reason: Optional[str] = None
+
+
+class AttendanceConfigRequest(BaseSchema):
+    class_start_time: Optional[str] = Field(default=None, example="08:30", description="Class start time in HH:MM or HH:MM:SS format")
+    class_end_time: Optional[str] = Field(default=None, example="11:30", description="Class end time in HH:MM or HH:MM:SS format")
+    cutoff_time: Optional[str] = Field(default=None, example="08:30", description="Backward compatible alias for start time")
+    grace_period_minutes: Optional[int] = Field(default=0, description="Grace period in minutes")
+
+
+class AttendanceConfigResponse(BaseSchema):
+    status: str = Field(default="success")
+    class_start_time: Optional[str] = "08:30:00"
+    class_end_time: Optional[str] = "11:30:00"
+    cutoff_time: str
+    grace_period_minutes: int = 0
+    current_time: Optional[str] = None
+    today: Optional[str] = None
+    message: Optional[str] = None
+
+
+class AttendanceChecklistItem(BaseSchema):
+    person_name: str
+    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, or ABSENT")
+    check_in_time: Optional[str] = None
+    track_id: Optional[int] = None
+    occupation: Optional[str] = "STUDENT"
+    clearance: Optional[str] = "REGISTERED"
+    snapshot_path: Optional[str] = ""
+
+
+class AttendanceChecklistResponse(BaseSchema):
+    status: str = Field(default="success")
+    date: str
+    class_start_time: Optional[str] = "08:30:00"
+    class_end_time: Optional[str] = "11:30:00"
+    cutoff_time: str
+    grace_period_minutes: int = 0
+    total_enrolled: int
+    present_count: int
+    late_count: int
+    absent_count: int
+    attended_count: int
+    attendance_rate: Optional[float] = 0.0
+    checklist: List[AttendanceChecklistItem] = Field(default_factory=list)
+
+
+class AttendanceManualMarkRequest(BaseSchema):
+    person_name: str
+    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, or ABSENT")
+    date: Optional[str] = None
+    custom_time: Optional[str] = None
+
+
+class AttendanceCheckAllRequest(BaseSchema):
+    status: Optional[str] = Field(default="PRESENT", example="PRESENT", description="PRESENT, LATE, or ABSENT")
+    date: Optional[str] = None
+
+

@@ -13,6 +13,33 @@ from typing import Dict, List, Optional, Tuple, Any, Iterable, Iterator
 from src.domain.subject_session import SubjectSession, TrackStatus
 
 
+def compute_box_iou(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
+    """Computes Intersection-over-Union (IoU) between bounding boxes (x1, y1, x2, y2)."""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    boxAArea = max(1, (boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
+    boxBArea = max(1, (boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
+    return float(interArea) / float(boxAArea + boxBArea - interArea + 1e-6)
+
+
+def compute_box_containment(boxA: Tuple[int, int, int, int], boxB: Tuple[int, int, int, int]) -> float:
+    """Computes Intersection-over-Smaller (IoS) / Containment ratio between two bounding boxes."""
+    xA = max(boxA[0], boxB[0])
+    yA = max(boxA[1], boxB[1])
+    xB = min(boxA[2], boxB[2])
+    yB = min(boxA[3], boxB[3])
+    interArea = max(0, xB - xA) * max(0, yB - yA)
+    if interArea <= 0:
+        return 0.0
+    areaA = max(1, (boxA[2] - boxA[0]) * (boxA[3] - boxA[1]))
+    areaB = max(1, (boxB[2] - boxB[0]) * (boxB[3] - boxB[1]))
+    smallerArea = min(areaA, areaB)
+    return float(interArea) / float(smallerArea)
+
+
 class TrackSessionCacheAdapter(MutableMapping):
     """Compatibility adapter exposing dictionary view over a SubjectSession."""
 
@@ -308,6 +335,7 @@ class TrackRegistry:
 
     def __init__(self):
         self._sessions: Dict[int, SubjectSession] = {}
+        self.recent_track_history: Dict[int, Dict[str, Any]] = {}
         self._lock = threading.RLock()
         self.active_tracks = ActiveTracksProxy(self)
         self.track_cache = TrackCacheProxy(self)
@@ -368,9 +396,147 @@ class TrackRegistry:
             if session is not None:
                 session.keypoints = keypoints
 
+    def update_frame_track(
+        self,
+        track_id: int,
+        box: Tuple[int, int, int, int],
+        current_frame: int,
+        spatial_inheritance_iou: float = 0.40,
+        max_inheritance_age: int = 45,
+    ) -> Tuple[SubjectSession, Optional[str]]:
+        """
+        Deep Method: Updates or creates a track session with spatial IoU inheritance.
+        If track_id is new, searches recent track history for candidate identity inheritance.
+        Returns:
+            Tuple[SubjectSession, Optional[str]]: (session, inherited_identity_name if inherited else None)
+        """
+        with self._lock:
+            inherited_name = None
+            if track_id not in self._sessions:
+                best_iou = 0.0
+                for old_tid, old_info in list(self.recent_track_history.items()):
+                    if current_frame - old_info.get("last_seen", 0) <= max_inheritance_age and old_info.get("confirmed", False):
+                        name_cand = old_info.get("name", "")
+                        old_sess = self._sessions.get(old_tid)
+                        is_valid_cand = (old_sess and old_sess.status == TrackStatus.CONFIRMED) or (
+                            name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"]
+                            and not str(name_cand).startswith("Scanning")
+                            and not str(name_cand).startswith("Contended")
+                        )
+                        if is_valid_cand:
+                            iou_val = compute_box_iou(box, old_info["box"])
+                            if iou_val > best_iou:
+                                best_iou = iou_val
+                                inherited_name = name_cand
+
+                if best_iou >= spatial_inheritance_iou and inherited_name is not None:
+                    session = SubjectSession(
+                        track_id=track_id,
+                        first_seen=current_frame,
+                        last_seen=current_frame,
+                        box=box,
+                        status=TrackStatus.CONFIRMED,
+                        identity_name=inherited_name,
+                        best_dist=0.35,
+                        best_norm=1.0,
+                    )
+                    self._sessions[track_id] = session
+                else:
+                    session = self.get_or_create(track_id, box, current_frame)
+                    inherited_name = None
+            else:
+                session = self._sessions[track_id]
+                session.box = box
+                session.last_seen = max(session.last_seen, current_frame)
+
+            # Record in recent track history
+            self.recent_track_history[track_id] = {
+                "box": box,
+                "last_seen": current_frame,
+                "name": session.display_name,
+                "confirmed": session.is_confirmed,
+            }
+
+            return session, inherited_name
+
+    def check_spatial_occlusion(
+        self,
+        track_id: int,
+        box: Tuple[int, int, int, int],
+        iou_threshold: float = 0.35,
+        ios_threshold: float = 0.40,
+    ) -> bool:
+        """
+        Determines whether the given track box overlaps with another confirmed subject box.
+        Prevents face extraction from confirming identity during crossover occlusion.
+        """
+        with self._lock:
+            for conf_tid, conf_info in self.recent_track_history.items():
+                if conf_tid != track_id and conf_info.get("confirmed", False):
+                    conf_box = conf_info.get("box")
+                    if conf_box and (
+                        compute_box_iou(box, conf_box) > iou_threshold
+                        or compute_box_containment(box, conf_box) > ios_threshold
+                    ):
+                        return True
+            return False
+
+    def evaluate_anti_limbo_timeout(
+        self,
+        session: SubjectSession,
+        max_scanning_age: int = 25
+    ) -> bool:
+        """
+        Transitions an unconfirmed candidate to UNVERIFIED if scanning exceeded max_scanning_age
+        without any valid face crops detected, eliminating HUD flickering.
+        Returns True if transition occurred.
+        """
+        with self._lock:
+            if session.status == TrackStatus.SCANNING and session.track_age() > max_scanning_age and session.valid_face_crops == 0:
+                session.mark_unverified()
+                return True
+            return False
+
+    def confirm_track_identity(
+        self,
+        track_id: int,
+        display_name: str,
+        dist: float = 0.5,
+        norm: float = 1.0,
+    ) -> Optional[SubjectSession]:
+        """Transitions subject session to CONFIRMED identity and updates recent track history."""
+        with self._lock:
+            session = self._sessions.get(track_id)
+            if session is not None:
+                session.confirm_identity(display_name, dist, norm)
+                if track_id in self.recent_track_history:
+                    self.recent_track_history[track_id]["name"] = display_name
+                    self.recent_track_history[track_id]["confirmed"] = True
+            return session
+
+    def find_expired_tracks(
+        self,
+        current_frame: int,
+        max_missing_frames: int = 60,
+        max_phantom_age: int = 45,
+    ) -> List[int]:
+        """
+        Identifies track IDs that are expired (> max_missing_frames since last seen)
+        or persistent headless phantoms (unconfirmed, 0 valid face crops, and age > max_phantom_age).
+        """
+        expired: List[int] = []
+        with self._lock:
+            for tid, session in self._sessions.items():
+                if current_frame - session.last_seen > max_missing_frames:
+                    expired.append(tid)
+                elif not session.is_confirmed and session.valid_face_crops == 0 and session.track_age(current_frame) > max_phantom_age:
+                    expired.append(tid)
+        return expired
+
     def purge(self, track_id: int) -> Optional[SubjectSession]:
         """Removes a session from the registry and returns it."""
         with self._lock:
+            self.recent_track_history.pop(track_id, None)
             return self._sessions.pop(track_id, None)
 
     def purge_stale(
@@ -390,7 +556,7 @@ class TrackRegistry:
                 is_missing = active_set is not None and tid not in active_set
                 is_timed_out = (current_frame - session.last_seen) > max_missing_frames
                 if is_missing and is_timed_out:
-                    self._sessions.pop(tid, None)
+                    self.purge(tid)
                     purged.append(tid)
         return purged
 
@@ -400,9 +566,10 @@ class TrackRegistry:
             return list(self._sessions.values())
 
     def clear(self) -> None:
-        """Clears all sessions from the registry."""
+        """Clears all sessions and track history from the registry."""
         with self._lock:
             self._sessions.clear()
+            self.recent_track_history.clear()
 
     def __len__(self) -> int:
         with self._lock:

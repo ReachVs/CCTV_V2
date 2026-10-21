@@ -15,8 +15,23 @@ __pycache__/
 .vscode/
 *.swp
 
-# Biometric & Security Privacy Artifacts
+# Biometric & Security Privacy Artifacts (Global & Local)
 events/
+captures/
+snapshots/
+debug_crops/
+known_faces/
+**/known_faces/**
+**/debug_crops/**
+
+# Database & Index Artifacts (Global)
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+*.sqlite
+*.sqlite3
+*.index
 data/*.db
 data/*.db-shm
 data/*.db-wal
@@ -26,13 +41,37 @@ data/known_faces/
 data/dataset/
 data/faces.index
 data/metadata.json
-*.log
-*.sqlite
-*.sqlite3
+data/attendance_config.json
+
+# Secrets, Credentials & Cryptographic Keys (Global)
 .env
 .env.*
 .env.local
+**/.env
+**/.env.*
+*.key
+*.pem
+*.p12
+*.pfx
+*.pkcs12
+*id_rsa*
+*.audit_key
+**/.audit_key
+credentials.json
+*secret*.json
 
-# Temporary / testing outputs
+# Logs & Diagnostics
+*.log
+npm-debug.log*
+yarn-debug.log*
+yarn-error.log*
+
+# Video & Capture Dumps
+*.mp4
+*.avi
+*.mov
+*.mkv
+*.webm
 stress_occlusion.mp4
+
 

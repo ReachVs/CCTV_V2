@@ -41,14 +41,14 @@ class IdentityConsensus:
         margin_threshold: float = 0.15,
         side_profile_threshold: float = 0.30,
         max_scanning_attempts: int = 12,
-        min_unknown_crops: int = 15
+        min_unknown_crops: Optional[int] = None
     ):
         self.consensus_votes = consensus_votes
         self.history_window = history_window
         self.margin_threshold = margin_threshold
         self.side_profile_threshold = side_profile_threshold
         self.max_scanning_attempts = max_scanning_attempts
-        self.min_unknown_crops = min_unknown_crops
+        self.min_unknown_crops = min_unknown_crops if min_unknown_crops is not None else min(15, max_scanning_attempts)
 
         # track_id -> List[Dict[str, Any]] (records of {"name": str, "is_side": bool})
         self._vote_histories: Dict[int, List[Dict[str, Any]]] = {}

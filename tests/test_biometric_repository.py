@@ -108,6 +108,48 @@ class TestBiometricRepository(unittest.TestCase):
         for v in meta_after.values():
             self.assertEqual(v["name"], "Alice")
 
+    def test_health_check_and_auto_heal_from_sqlite(self):
+        """Verify check_health detects desynchronization and auto_heal recovers from SQLite."""
+        v = [np.random.randn(512).astype(np.float32) for _ in range(2)]
+        self.repo.add_subject("Charlie", v, trigger_reload=False)
+
+        # Initially healthy
+        is_healthy, msg = self.repo.check_health()
+        self.assertTrue(is_healthy)
+        self.assertIn("operational", msg)
+
+        # Intentionally remove FAISS index and metadata.json to simulate corruption
+        if os.path.exists(self.index_path):
+            os.remove(self.index_path)
+        if os.path.exists(self.metadata_path):
+            os.remove(self.metadata_path)
+
+        # Health check must detect missing files
+        is_healthy, reason = self.repo.check_health()
+        self.assertFalse(is_healthy)
+
+        # Auto-heal must recover FAISS and metadata from SQLite
+        healed = self.repo.auto_heal()
+        self.assertTrue(healed)
+        self.assertTrue(os.path.exists(self.index_path))
+        self.assertTrue(os.path.exists(self.metadata_path))
+
+        # Verified healthy again
+        is_healthy_now, _ = self.repo.check_health()
+        self.assertTrue(is_healthy_now)
+
+    def test_cli_adapter_compatibility(self):
+        """Verify src.utils.auto_heal and src.utils.rebuild_db adapters work cleanly."""
+        from src.utils.auto_heal import check_database_health, auto_heal_database
+        from src.utils.rebuild_db import rebuild_biometric_database
+
+        # Direct function calls work
+        is_healthy, _ = check_database_health()
+        self.assertIsInstance(is_healthy, bool)
+
+        res = auto_heal_database()
+        self.assertIsInstance(res, bool)
+
 
 if __name__ == "__main__":
     unittest.main()

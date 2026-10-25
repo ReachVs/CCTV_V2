@@ -39,6 +39,13 @@ import aiosqlite
 from starlette.datastructures import MutableHeaders
 from starlette.types import ASGIApp, Receive, Scope, Send
 
+warnings.filterwarnings("ignore", message=".*urllib3.*")
+warnings.filterwarnings("ignore", category=UserWarning)
+
+PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
+if PROJECT_ROOT not in sys.path:
+    sys.path.insert(0, PROJECT_ROOT)
+
 from src.api.security import (
     get_server_host,
     get_configured_api_key,
@@ -49,13 +56,6 @@ from src.api.security import (
     safe_file_response,
     sanitize_subject_dossier,
 )
-
-warnings.filterwarnings("ignore", message=".*urllib3.*")
-warnings.filterwarnings("ignore", category=UserWarning)
-
-PROJECT_ROOT = os.path.abspath(os.path.join(os.path.dirname(__file__), "..", ".."))
-if PROJECT_ROOT not in sys.path:
-    sys.path.insert(0, PROJECT_ROOT)
 
 import src.inference.live_cctv as live_cctv
 from src.inference.engine import BiometricTrackingEngine

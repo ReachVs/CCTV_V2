@@ -3,6 +3,7 @@ Comprehensive Unit Tests for AttendanceService.
 Validates arrival time evaluation, PRESENT vs LATE classification,
 idempotency, checklist generation across enrolled rosters, and manual overrides.
 """
+import json
 import os
 import shutil
 import tempfile
@@ -137,11 +138,16 @@ class TestAttendanceService(unittest.TestCase):
         self.assertEqual(second_res["check_in_time"], "08:45:00")
 
     def test_anonymous_and_empty_names_ignored(self):
-        res = self.service.record_check_in("Unknown Person")
-        self.assertEqual(res["status"], "ignored")
+        self.assertEqual(self.service.record_check_in("Unknown Person")["status"], "ignored")
+        self.assertEqual(self.service.record_check_in("")["status"], "ignored")
+        self.assertEqual(self.service.record_check_in("Verifying: Ceaser (1/2)")["status"], "ignored")
+        self.assertEqual(self.service.record_check_in("Scanning Track 5")["status"], "ignored")
+        self.assertEqual(self.service.record_check_in("Contended Track 2")["status"], "ignored")
 
-        res_empty = self.service.record_check_in("")
-        self.assertEqual(res_empty["status"], "ignored")
+    def test_verified_prefix_stripped(self):
+        res = self.service.record_check_in("Verified: Ceaser", "2026-10-20 08:50:00")
+        self.assertEqual(res["status"], "new_check_in")
+        self.assertEqual(res["person_name"], "Ceaser")
 
     def test_get_daily_checklist(self):
         self.service.set_cutoff_time("09:00:00")
@@ -218,6 +224,14 @@ class TestAttendanceService(unittest.TestCase):
         self.assertEqual(cfg["class_end_time"], "11:30:00")
         self.assertEqual(cfg["grace_period_minutes"], 10)
 
+        # More than 30 mins before class start (< 08:00) -> OUT_OF_SESSION
+        dt_too_early = datetime(2026, 10, 20, 7, 50, 0)
+        self.assertEqual(self.service.evaluate_status(dt_too_early), "OUT_OF_SESSION")
+
+        # In 30-minute early check-in window (08:00 - 08:40) -> PRESENT
+        dt_early_admit = datetime(2026, 10, 20, 8, 15, 0)
+        self.assertEqual(self.service.evaluate_status(dt_early_admit), "PRESENT")
+
         # On time (<= 08:40) -> PRESENT
         dt_on_time = datetime(2026, 10, 20, 8, 35, 0)
         self.assertEqual(self.service.evaluate_status(dt_on_time), "PRESENT")
@@ -237,6 +251,35 @@ class TestAttendanceService(unittest.TestCase):
         # After class end (> 11:30) -> ABSENT (missed class)
         dt_after_class = datetime(2026, 10, 20, 11, 30, 1)
         self.assertEqual(self.service.evaluate_status(dt_after_class), "ABSENT")
+
+    def test_set_schedule_rejects_inverted_or_equal_times(self):
+        # End time earlier than start time (e.g. 17:50 to 16:00) must raise ValueError
+        with self.assertRaises(ValueError) as ctx:
+            self.service.set_schedule(class_start_time="17:50:00", class_end_time="16:00:00", grace_period_minutes=15)
+        self.assertIn("cannot be earlier than or equal to", str(ctx.exception))
+
+        # End time equal to start time must also raise ValueError
+        with self.assertRaises(ValueError) as ctx2:
+            self.service.set_schedule(class_start_time="16:00:00", class_end_time="16:00:00")
+        self.assertIn("cannot be earlier than or equal to", str(ctx2.exception))
+
+    def test_load_config_sanitizes_inverted_schedule(self):
+        # Create an inverted config on disk and verify _load_config auto-corrects it
+        bad_config = {
+            "class_start_time": "17:50:00",
+            "class_end_time": "16:00:00",
+            "cutoff_time": "17:50:00",
+            "grace_period_minutes": 15
+        }
+        with open(self.config_path, "w", encoding="utf-8") as f:
+            json.dump(bad_config, f)
+
+        # Trigger load
+        self.service._load_config()
+        cfg = self.service.get_config()
+        self.assertEqual(cfg["class_start_time"], "17:50:00")
+        # End time must be strictly after start time
+        self.assertGreater(cfg["class_end_time"], cfg["class_start_time"])
 
     def test_check_all(self):
         date_str = "2026-10-20"
@@ -304,7 +347,72 @@ class TestAttendanceService(unittest.TestCase):
         item = next(i for i in chk["checklist"] if i["person_name"] == "Student X")
         self.assertEqual(item["status"], "PRESENT")
 
+    def test_manual_override_with_reason_and_audit_log(self):
+        """Verifies teacher manual override with audit trail recording."""
+        date_str = "2026-10-22"
+        # Teacher marks Alice Smith as LATE with reason
+        res = self.service.manual_mark(
+            person_name="Alice Smith",
+            status="LATE",
+            date_str=date_str,
+            reason="Medical note submitted",
+            changed_by="PROF_DAVIS"
+        )
+        self.assertEqual(res["status"], "success")
+        self.assertEqual(res["attendance_status"], "LATE")
+        self.assertEqual(res["is_manual"], 1)
+
+        # Query audit log
+        logs = self.service.get_audit_log()
+        self.assertGreaterEqual(len(logs), 1)
+        latest = logs[0]
+        self.assertEqual(latest["person_name"], "Alice Smith")
+        self.assertEqual(latest["new_status"], "LATE")
+        self.assertEqual(latest["reason"], "Medical note submitted")
+        self.assertEqual(latest["changed_by"], "PROF_DAVIS")
+
+    def test_course_roster_and_pending_status(self):
+        """Verifies course roster filtering and PENDING unverified state during an active session."""
+        from src.domain.course_repository import CourseRepository
+        course_repo = CourseRepository(self.db_path)
+        course = course_repo.create_course(code="AI101", name="Artificial Intelligence")
+        cid = course["id"]
+        course_repo.enroll_student(cid, "Student Alpha")
+        course_repo.enroll_student(cid, "Student Beta")
+
+        # Set schedule for today with end_time in the future (23:59:59)
+        today = get_cambodia_now().strftime("%Y-%m-%d")
+        now_dt = get_cambodia_now()
+        day_of_week = now_dt.weekday()
+        course_repo.add_schedule(
+            course_id=cid,
+            day_of_week=day_of_week,
+            start_time="00:00:00",
+            end_time="23:59:59",
+            grace_minutes=15
+        )
+
+        # Service with course_repo aligned to active test schedule
+        srv = AttendanceService(db_path=self.db_path, course_repo=course_repo)
+        srv.set_schedule(class_start_time="00:00:00", class_end_time="23:59:59", grace_period_minutes=15)
+
+        # Check-in Student Alpha
+        srv.record_check_in("Student Alpha", f"{today} 00:05:00")
+
+        # Query checklist for AI101 on today
+        chk = srv.get_daily_checklist(today, course_id=cid)
+        self.assertEqual(chk["total_enrolled"], 2)
+        self.assertEqual(chk["present_count"], 1)
+        # Student Beta has not checked in and session ends at 23:59:59 -> Should be PENDING
+        self.assertEqual(chk["pending_count"], 1)
+        self.assertEqual(chk["absent_count"], 0)
+
+        items = {i["person_name"]: i for i in chk["checklist"]}
+        self.assertEqual(items["Student Alpha"]["status"], "PRESENT")
+        self.assertEqual(items["Student Beta"]["status"], "PENDING")
+
 
 if __name__ == "__main__":
     unittest.main()
+
 

@@ -77,14 +77,15 @@ class CyberpunkHUDAnnotator(Annotator):
     """
 
     # Color Palette (BGR)
-    COLOR_CONFIRMED = (0, 255, 0)       # Green
-    COLOR_SCANNING = (0, 165, 255)      # Amber / Orange
-    COLOR_CONTENDED = (0, 140, 255)     # Deep Orange / Red-Orange
-    COLOR_UNVERIFIED = (130, 130, 130)  # Muted Gray
-    COLOR_UNKNOWN = (0, 0, 255)         # Bright Red
-    COLOR_POSE = (255, 191, 0)          # Cyan / Blue
-    COLOR_KEYPOINT = (0, 255, 255)      # Yellow
-    COLOR_HEADER_BG = (15, 23, 42)      # Dark Slate (RGB: 42, 23, 15)
+    COLOR_CONFIRMED = (0, 230, 80)      # Emerald Green
+    COLOR_VERIFYING = (0, 190, 255)      # Amber / Gold
+    COLOR_SCANNING = (0, 165, 255)       # Amber / Orange
+    COLOR_CONTENDED = (0, 140, 255)      # Deep Orange / Red-Orange
+    COLOR_UNVERIFIED = (130, 130, 130)   # Muted Gray
+    COLOR_UNKNOWN = (0, 0, 255)          # Bright Red
+    COLOR_POSE = (255, 191, 0)           # Cyan / Blue
+    COLOR_KEYPOINT = (0, 255, 255)       # Yellow
+    COLOR_HEADER_BG = (15, 23, 42)       # Dark Slate (RGB: 42, 23, 15)
 
     def __init__(
         self,
@@ -189,17 +190,26 @@ class CyberpunkHUDAnnotator(Annotator):
                 color = self.COLOR_CONTENDED
                 label_str = f"ID {track_id}: Contended (Crossover)"
             elif is_scanning:
-                color = self.COLOR_SCANNING
-                label_str = f"ID {track_id}: Scanning..."
+                if name.startswith("Verifying"):
+                    color = self.COLOR_VERIFYING
+                    label_str = f"ID {track_id}: {name}"
+                else:
+                    color = self.COLOR_SCANNING
+                    label_str = f"ID {track_id}: Scanning..."
             elif is_unverified:
                 color = self.COLOR_UNVERIFIED
                 label_str = f"ID {track_id}: Unverified"
             elif not is_unknown:
                 color = self.COLOR_CONFIRMED
-                label_str = f"ID {track_id}: {name}"
+                clean_name = name.removeprefix("Verified: ") if name.startswith("Verified: ") else name
+                if clean_name.startswith("Verifying: "):
+                    clean_name = clean_name.removeprefix("Verifying: ").strip()
+                    if "(" in clean_name and clean_name.endswith(")"):
+                        clean_name = clean_name[:clean_name.rfind("(")].strip()
+                label_str = f"ID {track_id}: Verified: {clean_name}"
             else:
                 color = self.COLOR_UNKNOWN
-                label_str = f"ID {track_id}: Unknown Person"
+                label_str = f"ID {track_id}: Unusual Person"
 
             # Draw clean target bounding box
             cv2.rectangle(frame, (x1, y1), (x2, y2), color, self.box_thickness)

@@ -23,12 +23,27 @@ class IdentityConfirmedEvent:
     metadata: Dict[str, Any] = field(default_factory=dict)
 
 
+@dataclass(frozen=True)
+class UnusualPersonDetectedEvent:
+    """Immutable domain event emitted when an unrecognized face is tracked for >= 15 frames."""
+    track_id: int
+    first_seen_frame: int
+    frame_num: int
+    timestamp_str: str
+    snapshot_path: str = ""
+    metadata: Dict[str, Any] = field(default_factory=dict)
+
+
 class IdentityObserver(ABC):
     """Abstract Seam: Observer interface for verified identity lifecycle events."""
 
     @abstractmethod
     def on_identity_confirmed(self, event: IdentityConfirmedEvent) -> None:
         """Invoked when a tracked subject reaches consensus verification."""
+        pass
+
+    def on_unusual_person_detected(self, event: UnusualPersonDetectedEvent) -> None:
+        """Optional hook invoked when an unknown/unusual subject is tracked for >= 15 frames."""
         pass
 
 
@@ -41,11 +56,15 @@ class AttendanceIdentityObserver(IdentityObserver):
     def on_identity_confirmed(self, event: IdentityConfirmedEvent) -> None:
         if self.attendance_service is not None and hasattr(self.attendance_service, "record_check_in"):
             try:
+                course_id = None
+                if getattr(event, "metadata", None) and isinstance(event.metadata, dict):
+                    course_id = event.metadata.get("course_id")
                 self.attendance_service.record_check_in(
                     person_name=event.person_name,
                     timestamp_str=event.timestamp_str,
                     track_id=event.track_id,
                     match_distance=event.match_distance,
+                    course_id=course_id
                 )
             except Exception as e:
                 print(f"[AttendanceIdentityObserver Warning] Check-in error for {event.person_name}: {e}")
@@ -109,6 +128,15 @@ class IdentityEventDispatcher:
                 obs.on_identity_confirmed(event)
             except Exception as e:
                 print(f"[IdentityEventDispatcher Warning] Observer {obs} raised: {e}")
+
+    def dispatch_unusual_person(self, event: UnusualPersonDetectedEvent) -> None:
+        with self._lock:
+            observers_copy = list(self._observers)
+        for obs in observers_copy:
+            try:
+                obs.on_unusual_person_detected(event)
+            except Exception as e:
+                print(f"[IdentityEventDispatcher Warning] Observer {obs} raised in on_unusual_person_detected: {e}")
 
     @property
     def observers(self) -> List[IdentityObserver]:

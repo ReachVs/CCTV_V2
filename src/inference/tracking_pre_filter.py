@@ -117,11 +117,14 @@ class TrackingPreFilter:
         fx1, fy1, fx2, fy2 = box
         box_h = fy2 - fy1
         box_w = fx2 - fx1
+        aspect = float(box_w) / float(box_h) if box_h > 0 else 0.5
 
         # 1. Fast Face Detection Check on Upper Torso/Head Crop (YuNet)
         h_frame, w_frame = frame.shape[:2]
         crop_y1 = max(0, fy1 - int(box_h * 0.10))
-        crop_y2 = min(h_frame, fy1 + int(box_h * 0.55))
+        # Seated/webcam upper-body (aspect >= 0.55) contains full face/chin; standing body uses 0.70
+        crop_ratio = 1.05 if aspect >= 0.55 else 0.70
+        crop_y2 = min(h_frame, fy1 + int(box_h * crop_ratio))
         crop_x1 = max(0, fx1 - int(box_w * 0.15))
         crop_x2 = min(w_frame, fx2 + int(box_w * 0.15))
 
@@ -157,7 +160,7 @@ class TrackingPreFilter:
                 pass
 
         with self.lock:
-            self.head_presence_negative_cache[track_id] = current_frame_num + 15
+            self.head_presence_negative_cache[track_id] = current_frame_num + getattr(self, "negative_cache_ttl", 15)
         return False
 
     def filter_and_arbitrate(
@@ -263,19 +266,13 @@ class TrackingPreFilter:
                             iou = compute_box_iou(cbox, hist_info["box"])
                             containment = compute_box_containment(cbox, hist_info["box"])
                             if iou > 0.30 or containment > 0.35:
-                                if not self.has_head_or_shoulder_presence(frame, cbox, cid, current_frame_num) or containment > 0.35:
-                                    suppressed = True
-                                    break
-                                if (cid in active_track_ids) and iou <= 0.65:
-                                    pass
-                                else:
+                                if not self.has_head_or_shoulder_presence(frame, cbox, cid, current_frame_num):
                                     suppressed = True
                                     break
 
             if suppressed:
                 if not c_confirmed:
                     suppressed_track_ids.append(cid)
-                    self.purge_track(cid)
                 continue
 
             current_frame_boxes[cid] = cbox

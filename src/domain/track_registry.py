@@ -72,7 +72,7 @@ class TrackSessionCacheAdapter(MutableMapping):
         if key == "name":
             if value == "Unknown Person":
                 self._session.mark_unknown()
-            elif value.startswith("Scanning"):
+            elif value.startswith("Scanning") or value.startswith("Verifying"):
                 self._session.status = TrackStatus.SCANNING
                 self._session.identity_name = value
             elif value.startswith("Contended"):
@@ -141,7 +141,7 @@ class ActiveTracksProxy(MutableMapping):
             s = self._registry.get_or_create(track_id, (0, 0, 0, 0), 1)
         if name == "Unknown Person":
             s.mark_unknown()
-        elif name.startswith("Scanning"):
+        elif name.startswith("Scanning") or name.startswith("Verifying"):
             s.status = TrackStatus.SCANNING
             s.identity_name = name
         elif name.startswith("Contended"):
@@ -422,6 +422,8 @@ class TrackRegistry:
                             name_cand not in ["Unknown", "Ambiguous Match", "Unknown Person"]
                             and not str(name_cand).startswith("Scanning")
                             and not str(name_cand).startswith("Contended")
+                            and not str(name_cand).startswith("Verifying")
+                            and not str(name_cand).startswith("Unverified")
                         )
                         if is_valid_cand:
                             iou_val = compute_box_iou(box, old_info["box"])
@@ -529,7 +531,7 @@ class TrackRegistry:
             for tid, session in self._sessions.items():
                 if current_frame - session.last_seen > max_missing_frames:
                     expired.append(tid)
-                elif not session.is_confirmed and session.valid_face_crops == 0 and session.track_age(current_frame) > max_phantom_age:
+                elif not session.is_confirmed and session.valid_face_crops == 0 and session.track_age(current_frame) > max_phantom_age and (current_frame - session.last_seen > 15):
                     expired.append(tid)
         return expired
 

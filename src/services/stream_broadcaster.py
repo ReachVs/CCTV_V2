@@ -18,6 +18,7 @@ import numpy as np
 from fastapi import WebSocket, WebSocketDisconnect
 
 from src.domain.identity_observer import IdentityConfirmedEvent
+from src.domain.schedule_policy import get_cambodia_now
 from src.inference.multi_camera import CameraIngestionPool
 
 
@@ -69,17 +70,31 @@ class StreamBroadcaster:
             # Domain Seam: Notify registered IdentityObservers of active confirmed tracks
             if hasattr(self.engine, "identity_dispatcher"):
                 for track in self.engine.get_active_tracks():
+                    if not getattr(track, "is_confirmed", False):
+                        continue
                     name = getattr(track, "confirmed_name", None) or getattr(track, "subject_name", None) or getattr(track, "name", None)
-                    conf = getattr(track, "match_confidence", 0.0) or (0.85 if getattr(track, "is_confirmed", False) else 0.50)
-                    if name and str(name).lower() not in ("unknown", "unidentified", "searching...", "unverified", "unknown person") and not str(name).lower().startswith("scanning") and not str(name).lower().startswith("contended"):
-                        if conf >= 0.60 or getattr(track, "is_confirmed", False):
-                            self.engine.identity_dispatcher.dispatch(IdentityConfirmedEvent(
-                                track_id=getattr(track, "track_id", 0) or 0,
-                                person_name=str(name),
-                                match_distance=round(float(1.0 - conf if conf > 0 else 0.0), 3),
-                                timestamp_str=datetime.now().strftime("%Y-%m-%d %H:%M:%S"),
-                                frame_num=getattr(self.engine, "frame_count", 0),
-                            ))
+                    if not name:
+                        continue
+                    clean_name = str(name).strip()
+                    if clean_name.startswith("Verified: "):
+                        clean_name = clean_name.removeprefix("Verified: ").strip()
+                    name_lower = clean_name.lower()
+                    if (
+                        name_lower in ("unknown", "unidentified", "searching...", "unverified", "unknown person")
+                        or name_lower.startswith("scanning")
+                        or name_lower.startswith("verifying")
+                        or name_lower.startswith("contended")
+                    ):
+                        continue
+
+                    conf = getattr(track, "match_confidence", 0.0) or 0.85
+                    self.engine.identity_dispatcher.dispatch(IdentityConfirmedEvent(
+                        track_id=getattr(track, "track_id", 0) or 0,
+                        person_name=clean_name,
+                        match_distance=round(float(1.0 - conf if conf > 0 else 0.0), 3),
+                        timestamp_str=get_cambodia_now().strftime("%Y-%m-%d %H:%M:%S"),
+                        frame_num=getattr(self.engine, "frame_count", 0),
+                    ))
             return res.annotated_frame
         except Exception as e:
             print(f"[StreamBroadcaster Warning] Frame processing exception: {e}")

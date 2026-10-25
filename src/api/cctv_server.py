@@ -28,12 +28,27 @@ from typing import Dict, Any, List, Optional
 
 import numpy as np
 import cv2
-from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, status
-from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse
+import csv
+import io
+from fastapi import FastAPI, WebSocket, WebSocketDisconnect, Request, HTTPException, status, Depends
+from fastapi.responses import HTMLResponse, JSONResponse, StreamingResponse, FileResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 import uvicorn
 import aiosqlite
+from starlette.datastructures import MutableHeaders
+from starlette.types import ASGIApp, Receive, Scope, Send
+
+from src.api.security import (
+    get_server_host,
+    get_configured_api_key,
+    is_admin_request,
+    require_admin_auth,
+    enrollment_rate_limiter,
+    is_allowed_websocket_origin,
+    safe_file_response,
+    sanitize_subject_dossier,
+)
 
 warnings.filterwarnings("ignore", message=".*urllib3.*")
 warnings.filterwarnings("ignore", category=UserWarning)
@@ -69,10 +84,18 @@ from src.api.schemas import (
     AttendanceChecklistItem,
     AttendanceChecklistResponse,
     AttendanceManualMarkRequest,
-    AttendanceCheckAllRequest
+    AttendanceCheckAllRequest,
+    UnusualPersonAlertItem,
+    UnusualPersonListResponse,
+    UnusualPersonDismissRequest,
+    UnusualPersonEnrollRequest,
+    CourseCreateRequest,
+    CourseEnrollStudentRequest,
+    ScheduleCreateRequest,
 )
 from src.services.biometric_enrollment_manager import BiometricEnrollmentManager
 from src.services.attendance_service import AttendanceService
+from src.services.unusual_person_service import UnusualPersonService
 
 DATA_DIR = os.path.join(PROJECT_ROOT, "data")
 os.makedirs(DATA_DIR, exist_ok=True)
@@ -81,6 +104,8 @@ INDEX_PATH = os.path.join(DATA_DIR, "faces.index")
 METADATA_PATH = os.path.join(DATA_DIR, "metadata.json")
 KNOWN_FACES_DIR = os.path.join(DATA_DIR, "known_faces")
 os.makedirs(KNOWN_FACES_DIR, exist_ok=True)
+UNUSUAL_DIR = os.path.join(DATA_DIR, "unusual_events")
+os.makedirs(UNUSUAL_DIR, exist_ok=True)
 
 def get_safe_subject_dir(name: str) -> Optional[str]:
     """
@@ -115,6 +140,11 @@ if hasattr(engine, "register_identity_observer"):
     engine.register_identity_observer(AttendanceIdentityObserver(attendance_service))
 else:
     engine.set_attendance_service(attendance_service)
+
+# Unusual Person Alert Service
+unusual_service = UnusualPersonService(storage_dir=UNUSUAL_DIR, url_prefix="/data/unusual_events")
+if hasattr(engine, "register_identity_observer"):
+    engine.register_identity_observer(unusual_service)
 
 # Deep Subject Enrollment Manager
 enrollment_manager = BiometricEnrollmentManager(
@@ -185,19 +215,77 @@ app = FastAPI(
     lifespan=lifespan
 )
 
-if os.path.exists(EVENTS_DIR):
-    app.mount("/events", StaticFiles(directory=EVENTS_DIR), name="events")
-
-if os.path.exists(KNOWN_FACES_DIR):
-    app.mount("/data/known_faces", StaticFiles(directory=KNOWN_FACES_DIR), name="known_faces")
-
 STATIC_DIR = os.path.join(PROJECT_ROOT, "static")
 if os.path.exists(STATIC_DIR):
     app.mount("/static", StaticFiles(directory=STATIC_DIR), name="static")
 
 
-@app.middleware("http")
+@app.get("/data/unusual_events/{filename}")
+async def get_unusual_event_snapshot(filename: str):
+    """Secure controlled delivery of unusual event snapshots (no directory listing)."""
+    return safe_file_response(UNUSUAL_DIR, filename)
+
+
+@app.get("/data/known_faces/{folder_name}/{filename}")
+async def get_known_face_image(folder_name: str, filename: str):
+    """Secure controlled delivery of enrolled face exemplars with traversal guards."""
+    subject_dir = get_safe_subject_dir(folder_name)
+    if not subject_dir:
+        raise HTTPException(status_code=400, detail="Invalid subject directory.")
+    return safe_file_response(subject_dir, filename)
+
+
+@app.get("/events/{filename}")
+async def get_event_snapshot(filename: str):
+    """Secure controlled delivery of detection event snapshots."""
+    return safe_file_response(EVENTS_DIR, filename)
+
+
+class SecurityHeadersMiddleware:
+    """
+    Pure ASGI middleware for HTTP security headers.
+    Avoids Starlette BaseHTTPMiddleware AnyIO memory streams,
+    preventing anyio.WouldBlock and unhandled CancelledError on shutdown,
+    and avoiding buffering issues with StreamingResponse.
+    """
+    def __init__(self, app: ASGIApp):
+        self.app = app
+
+    async def __call__(self, scope: Scope, receive: Receive, send: Send) -> None:
+        if scope["type"] != "http":
+            await self.app(scope, receive, send)
+            return
+
+        async def send_with_security_headers(message: Dict[str, Any]) -> None:
+            if message["type"] == "http.response.start":
+                headers = MutableHeaders(scope=message)
+                headers["x-content-type-options"] = "nosniff"
+                headers["x-frame-options"] = "SAMEORIGIN"
+                headers["x-xss-protection"] = "1; mode=block"
+                headers["referrer-policy"] = "strict-origin-when-cross-origin"
+                headers["content-security-policy"] = (
+                    "default-src 'self'; "
+                    "img-src 'self' data: blob:; "
+                    "style-src 'self' 'unsafe-inline'; "
+                    "script-src 'self' 'unsafe-inline'; "
+                    "connect-src 'self' ws: wss:; "
+                    "frame-ancestors 'none'; "
+                    "base-uri 'self';"
+                )
+                path = scope.get("path", "")
+                if path.startswith("/static/"):
+                    headers["cache-control"] = "no-cache, no-store, must-revalidate"
+                    headers["pragma"] = "no-cache"
+                    headers["expires"] = "0"
+            await send(message)
+
+        await self.app(scope, receive, send_with_security_headers)
+
+
 async def add_security_headers(request: Request, call_next):
+    """
+    Backward-compatible response decorator for testing and direct invocation.
+    """
     response = await call_next(request)
     response.headers["X-Content-Type-Options"] = "nosniff"
     response.headers["X-Frame-Options"] = "SAMEORIGIN"
@@ -217,6 +305,9 @@ async def add_security_headers(request: Request, call_next):
         response.headers["Pragma"] = "no-cache"
         response.headers["Expires"] = "0"
     return response
+
+
+app.add_middleware(SecurityHeadersMiddleware)
 
 
 # Container Orchestration Probes (Task 4)
@@ -273,7 +364,7 @@ async def get_system_mode():
     )
 
 
-@app.post("/api/system/mode", response_model=SystemModeResponse)
+@app.post("/api/system/mode", response_model=SystemModeResponse, dependencies=[Depends(require_admin_auth)])
 async def set_system_mode(req: SystemModeRequest):
     mode = broadcaster.set_mode(req.mode, pose_only=req.pose_only_mode)
     return SystemModeResponse(
@@ -284,8 +375,8 @@ async def set_system_mode(req: SystemModeRequest):
     )
 
 
-@app.api_route("/api/system/mode/enrollment", methods=["GET", "POST"])
-@app.api_route("/api/camera/pause", methods=["GET", "POST"])
+@app.api_route("/api/system/mode/enrollment", methods=["GET", "POST"], dependencies=[Depends(require_admin_auth)])
+@app.api_route("/api/camera/pause", methods=["GET", "POST"], dependencies=[Depends(require_admin_auth)])
 async def set_mode_enrollment():
     mode = broadcaster.set_mode("ENROLLMENT")
     return SystemModeResponse(
@@ -296,8 +387,8 @@ async def set_mode_enrollment():
     )
 
 
-@app.api_route("/api/system/mode/surveillance", methods=["GET", "POST"])
-@app.api_route("/api/camera/resume", methods=["GET", "POST"])
+@app.api_route("/api/system/mode/surveillance", methods=["GET", "POST"], dependencies=[Depends(require_admin_auth)])
+@app.api_route("/api/camera/resume", methods=["GET", "POST"], dependencies=[Depends(require_admin_auth)])
 async def set_mode_surveillance():
     mode = broadcaster.set_mode("SURVEILLANCE")
     return SystemModeResponse(
@@ -316,7 +407,7 @@ async def list_camera_streams():
     )
 
 
-@app.post("/api/camera/streams", response_model=CameraStatusResponse)
+@app.post("/api/camera/streams", response_model=CameraStatusResponse, dependencies=[Depends(require_admin_auth)])
 async def add_camera_stream(cfg: CameraFeedConfig):
     success = broadcaster.add_camera(
         stream_id=cfg.stream_id,
@@ -353,13 +444,15 @@ async def enroll_page(request: Request):
 
 
 @app.post("/api/enroll/preview", response_model=FacePreviewResponse)
-async def preview_enrollment_faces(req: FacePreviewRequest):
+async def preview_enrollment_faces(req: FacePreviewRequest, request: Request):
     """
     Zero-Friction Face Curation: Decodes uploaded images, aligns faces via YuNet,
     evaluates focus sharpness, and returns verified thumbnail previews for user confirmation.
+    Hardened with rate limiting and strict payload caps (OWASP A04).
     """
-    if len(req.images_base64) > 30:
-        raise HTTPException(status_code=400, detail="Maximum 30 images per preview batch exceeded.")
+    enrollment_rate_limiter.check(request)
+    if len(req.images_base64) > 12:
+        raise HTTPException(status_code=400, detail="Maximum 12 images per preview batch exceeded.")
 
     raw_bytes_list = []
     for b64 in req.images_base64:
@@ -369,7 +462,7 @@ async def preview_enrollment_faces(req: FacePreviewRequest):
             if "," in b64:
                 b64 = b64.split(",")[1]
             decoded = base64.b64decode(b64)
-            if len(decoded) > 15 * 1024 * 1024:
+            if len(decoded) > 5 * 1024 * 1024:
                 continue
             raw_bytes_list.append(decoded)
         except Exception:
@@ -393,12 +486,14 @@ async def preview_enrollment_faces(req: FacePreviewRequest):
     )
 
 
-@app.post("/api/enroll/commit", response_model=FaceEnrollmentResponse)
-async def commit_enrollment_api(req: FaceCommitEnrollmentRequest):
+@app.post("/api/enroll/commit", response_model=FaceEnrollmentResponse, dependencies=[Depends(require_admin_auth)])
+async def commit_enrollment_api(req: FaceCommitEnrollmentRequest, request: Request):
     """
     Commits approved curated face crops into the subject database, generates multi-exemplar
     512D ArcFace embeddings, updates SQLite records, and hot-reloads FAISS without filesystem wrangling.
+    Requires verified administrative authorization and passes through rate limiter.
     """
+    enrollment_rate_limiter.check(request)
     clean_name = req.full_name.strip()
     if not clean_name:
         raise HTTPException(status_code=400, detail="Full Name is required.")
@@ -459,8 +554,8 @@ async def commit_enrollment_api(req: FaceCommitEnrollmentRequest):
 
 
 
-@app.post("/api/enroll", response_model=FaceEnrollmentResponse)
-async def enroll_subject_api(req: FaceEnrollmentRequest):
+@app.post("/api/enroll", response_model=FaceEnrollmentResponse, dependencies=[Depends(require_admin_auth)])
+async def enroll_subject_api(req: FaceEnrollmentRequest, request: Request):
     """
     Backward-compatible enrollment endpoint adapter delegating to commit_enrollment_api.
     """
@@ -475,7 +570,7 @@ async def enroll_subject_api(req: FaceEnrollmentRequest):
         threat_level=req.threat_level,
         approved_crops_base64=image_b64_list
     )
-    return await commit_enrollment_api(commit_req)
+    return await commit_enrollment_api(commit_req, request)
 
 
 @app.get("/api/stats")
@@ -539,132 +634,39 @@ async def get_audit_events():
 
 
 # =====================================================================
-# Attendance Checklist & Scheduling Endpoints
+# Modular Routers: Attendance & Courses
 # =====================================================================
+from src.api.routes.attendance_routes import (
+    router as attendance_router,
+    init_attendance_dependencies,
+    get_attendance_config,
+    set_attendance_config,
+    check_all_attendance,
+    get_attendance_checklist,
+    manual_mark_attendance,
+    export_attendance_csv,
+    get_unusual_persons,
+    dismiss_unusual_person,
+    enroll_unusual_person,
+    get_attendance_audit,
+    reset_attendance,
+)
+from src.api.routes.course_routes import (
+    router as course_router,
+    set_course_service_provider,
+    list_courses,
+    create_course,
+    get_course_roster,
+    enroll_student_in_course,
+    add_course_schedule,
+)
 
-@app.get("/api/attendance/config", response_model=AttendanceConfigResponse)
-async def get_attendance_config():
-    """Returns active attendance schedule, class start/end times, and grace period."""
-    try:
-        cfg = attendance_service.get_config()
-        return AttendanceConfigResponse(
-            status="success",
-            class_start_time=cfg.get("class_start_time", "18:00:00"),
-            class_end_time=cfg.get("class_end_time", "21:00:00"),
-            cutoff_time=cfg["cutoff_time"],
-            grace_period_minutes=cfg["grace_period_minutes"],
-            current_time=cfg["current_time"],
-            today=cfg["today"]
-        )
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
+init_attendance_dependencies(attendance_service, unusual_service, enrollment_manager)
+set_course_service_provider(attendance_service)
 
+app.include_router(attendance_router)
+app.include_router(course_router)
 
-@app.post("/api/attendance/config", response_model=AttendanceConfigResponse)
-async def set_attendance_config(req: AttendanceConfigRequest):
-    """Sets class start time, end time, and optional grace period."""
-    try:
-        start_time = req.class_start_time or req.cutoff_time
-        if not start_time:
-            raise HTTPException(status_code=400, detail="class_start_time or cutoff_time is required.")
-        res = attendance_service.set_schedule(
-            class_start_time=start_time,
-            class_end_time=req.class_end_time,
-            grace_period_minutes=req.grace_period_minutes or 0
-        )
-        cfg = attendance_service.get_config()
-        return AttendanceConfigResponse(
-            status="success",
-            class_start_time=res.get("class_start_time", "18:00:00"),
-            class_end_time=res.get("class_end_time", "21:00:00"),
-            cutoff_time=res["cutoff_time"],
-            grace_period_minutes=res["grace_period_minutes"],
-            current_time=cfg["current_time"],
-            today=cfg["today"],
-            message=res["message"]
-        )
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=str(e))
-
-
-@app.post("/api/attendance/check-all")
-async def check_all_attendance(req: AttendanceCheckAllRequest):
-    """Marks attendance status (e.g. PRESENT) for all enrolled students."""
-    status = (req.status or "PRESENT").upper()
-    if status not in ("PRESENT", "LATE", "ABSENT"):
-        raise HTTPException(status_code=400, detail="Status must be PRESENT, LATE, or ABSENT.")
-    if req.date:
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", req.date.strip()):
-            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
-    try:
-        res = attendance_service.check_all(
-            status=status,
-            date_str=req.date.strip() if req.date else None
-        )
-        return JSONResponse(content=res)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to mark attendance for all students.")
-
-
-@app.get("/api/attendance/checklist", response_model=AttendanceChecklistResponse)
-async def get_attendance_checklist(date: Optional[str] = None):
-    """Retrieves full attendance checklist for today (or specified date: YYYY-MM-DD)."""
-    if date:
-        date = date.strip()
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
-    try:
-        res = attendance_service.get_daily_checklist(date_str=date)
-        return AttendanceChecklistResponse(**res)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to retrieve attendance checklist.")
-
-
-@app.post("/api/attendance/manual")
-async def manual_mark_attendance(req: AttendanceManualMarkRequest):
-    """Manually marks attendance status (PRESENT, LATE, ABSENT) for an individual."""
-    clean_name = req.person_name.strip()
-    if not clean_name or len(clean_name) > 100:
-        raise HTTPException(status_code=400, detail="Invalid person name. Must be 1 to 100 characters.")
-    if req.status.upper() not in ("PRESENT", "LATE", "ABSENT"):
-        raise HTTPException(status_code=400, detail="Status must be PRESENT, LATE, or ABSENT.")
-    if req.date:
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", req.date.strip()):
-            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
-    try:
-        res = attendance_service.manual_mark(
-            person_name=clean_name,
-            status=req.status.upper(),
-            date_str=req.date.strip() if req.date else None,
-            custom_time=req.custom_time.strip() if req.custom_time else None
-        )
-        return JSONResponse(content=res)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to update manual attendance status.")
-
-
-@app.post("/api/attendance/reset")
-async def reset_attendance(date: Optional[str] = None):
-    """Resets attendance records for today or the specified date."""
-    if date:
-        date = date.strip()
-        if not re.match(r"^\d{4}-\d{2}-\d{2}$", date):
-            raise HTTPException(status_code=400, detail="Invalid date format. Expected YYYY-MM-DD.")
-    try:
-        res = attendance_service.reset_daily_attendance(date_str=date)
-        return JSONResponse(content=res)
-    except ValueError as ve:
-        raise HTTPException(status_code=400, detail=str(ve))
-    except Exception as e:
-        raise HTTPException(status_code=500, detail="Failed to reset daily attendance.")
 
 
 @app.get("/api/subject/avatar/{name}")
@@ -689,7 +691,7 @@ async def get_subject_avatar(name: str):
 
 
 @app.get("/api/subject/{name}")
-async def get_subject_dossier(name: str):
+async def get_subject_dossier(name: str, request: Request):
     try:
         subject_dir = get_safe_subject_dir(name)
         clean_name = os.path.basename(name.strip())
@@ -728,10 +730,13 @@ async def get_subject_dossier(name: str):
                             meta_info.update(v)
                             break
 
+        # Apply PII Redaction unless caller holds verified administrative authorization
+        sanitized_meta = sanitize_subject_dossier(meta_info, is_admin=is_admin_request(request))
+
         return JSONResponse(content={
             "status": "success",
             "name": clean_name,
-            "meta": meta_info,
+            "meta": sanitized_meta,
             "images": images
         })
     except Exception as e:
@@ -740,12 +745,18 @@ async def get_subject_dossier(name: str):
 
 @app.websocket("/ws/raw_video")
 async def websocket_raw_video_endpoint(websocket: WebSocket):
+    if not is_allowed_websocket_origin(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await websocket.accept()
     await broadcaster.stream_raw_websocket(websocket)
 
 
 @app.websocket("/ws/video")
 async def websocket_video_endpoint(websocket: WebSocket):
+    if not is_allowed_websocket_origin(websocket):
+        await websocket.close(code=status.WS_1008_POLICY_VIOLATION)
+        return
     await websocket.accept()
     await broadcaster.stream_processed_websocket(websocket)
 
@@ -775,19 +786,27 @@ def find_available_port(start_port=8000, max_attempts=10):
 
 def start_server():
     port = find_available_port(8000)
+    host = get_server_host()
     print("=" * 60)
     print("  SLEEPER AGENT AI BIOMETRIC REAL-TIME WEB DASHBOARD SERVER")
     print("=" * 60)
-    print(f"  [+] Web Dashboard URL: http://localhost:{port}")
-    print(f"  [+] WebSocket Video:   ws://localhost:{port}/ws/video")
-    print(f"  [+] Audit Events API:  http://localhost:{port}/api/events")
-    print(f"  [+] Liveness Probe:    http://localhost:{port}/healthz")
-    print(f"  [+] Readiness Probe:   http://localhost:{port}/ready")
+    print(f"  [+] Host Interface:    {host}")
+    print(f"  [+] Web Dashboard URL: http://{host}:{port}")
+    print(f"  [+] WebSocket Video:   ws://{host}:{port}/ws/video")
+    print(f"  [+] Audit Events API:  http://{host}:{port}/api/events")
+    print(f"  [+] Liveness Probe:    http://{host}:{port}/healthz")
+    print(f"  [+] Readiness Probe:   http://{host}:{port}/ready")
+    if host == "0.0.0.0" and not get_configured_api_key():
+        print("  [!] WARNING: Server bound to 0.0.0.0 with no CCTV_API_KEY configured!")
     print("=" * 60)
     try:
-        uvicorn.run("src.api.cctv_server:app", host="0.0.0.0", port=port, log_level="info", reload=False)
+        config = uvicorn.Config("src.api.cctv_server:app", host=host, port=port, log_level="info", reload=False)
+        server = uvicorn.Server(config)
+        server.run()
     except (KeyboardInterrupt, SystemExit):
         pass
+    except Exception as e:
+        print(f"[CCTV Server] Server terminated: {e}")
 
 
 if __name__ == "__main__":

@@ -82,47 +82,86 @@
             </div>
         </div>
 
+        <!-- Pinned Unusual Person / Intruder Alert Banner Container -->
+        <div id="unusual-alert-container" style="display: none; margin-bottom: 12px;"></div>
+
         <!-- Automated Attendance Checklist Card -->
         <div class="sidebar-card" id="attendance-card" style="margin-bottom: 12px;">
-            <div class="card-title-row">
+            <div class="card-title-row" style="flex-wrap: wrap; gap: 8px;">
                 <div class="card-title">
                     <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M9 11l3 3L22 4"/><path d="M21 12v7a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2V5a2 2 0 0 1 2-2h11"/></svg>
-                    ATTENDANCE CHECKLIST
+                    ATTENDANCE
                 </div>
-                <span class="status-badge verified" id="att-badge-cutoff" style="font-size: 0.6rem;">SCHEDULE: <span id="att-schedule-display">18:00 - 21:00</span></span>
+                <div style="display: flex; align-items: center; gap: 6px;">
+                    <select id="att-course-select" class="form-input" style="font-size: 0.68rem; padding: 3px 8px; width: 130px; border-radius: 6px; background: rgba(0,0,0,0.6);" title="Select active course or timetable period">
+                        <option value="">Global Roster</option>
+                    </select>
+                    <span class="status-badge verified" id="att-badge-cutoff" style="font-size: 0.6rem;">SCHEDULE: <span id="att-schedule-display">18:00 - 21:00</span></span>
+                </div>
             </div>
 
-            <!-- Attendance Schedule Configuration Bar (Class Start & Class End) -->
-            <div style="display: flex; gap: 6px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; background: rgba(255,255,255,0.04); padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-hairline);">
-                <div style="display: flex; align-items: center; gap: 5px;">
-                    <label for="att-start-time-input" style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">START:</label>
-                    <input type="time" id="att-start-time-input" value="18:00" class="form-input" style="font-size: 0.74rem; padding: 4px 8px; width: 84px; border-radius: 6px;" title="Class Start Time">
+            <!-- Apple Fluid Date Control Bar (§1, §4, §12) -->
+            <div class="apple-date-control-bar" style="display: flex; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.035); border: 1px solid var(--border-hairline); border-top: 1px solid var(--border-specular); border-radius: var(--radius-md); padding: 5px 8px; backdrop-filter: var(--blur-glass); -webkit-backdrop-filter: var(--blur-glass);">
+                <div class="apple-date-stepper-group" style="display: flex; align-items: center; gap: 3px;">
+                    <button type="button" id="att-date-prev" class="apple-stepper-btn" title="Previous Day" aria-label="Previous Day">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="15 18 9 12 15 6"/></svg>
+                    </button>
+                    <!-- Visual Date Chip that triggers the native OS calendar via showPicker() on click -->
+                    <div id="att-date-chip" class="apple-date-picker-chip" title="Click to choose a date from calendar (no manual typing)" tabindex="0" role="button" aria-haspopup="dialog">
+                        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-accent)" stroke-width="2"><rect x="3" y="4" width="18" height="18" rx="2" ry="2"/><line x1="16" y1="2" x2="16" y2="6"/><line x1="8" y1="2" x2="8" y2="6"/><line x1="3" y1="10" x2="21" y2="10"/></svg>
+                        <span id="att-date-display-label" style="font-weight: 600; letter-spacing: -0.01em;">TODAY</span>
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5" style="opacity: 0.6;"><polyline points="6 9 12 15 18 9"/></svg>
+                        <input type="date" id="att-date-native-picker" class="apple-date-native-hidden" aria-label="Select attendance date">
+                    </div>
+                    <button type="button" id="att-date-next" class="apple-stepper-btn" title="Next Day" aria-label="Next Day">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="9 18 15 12 9 6"/></svg>
+                    </button>
                 </div>
                 <div style="display: flex; align-items: center; gap: 5px;">
-                    <label for="att-end-time-input" style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">END:</label>
-                    <input type="time" id="att-end-time-input" value="21:00" class="form-input" style="font-size: 0.74rem; padding: 4px 8px; width: 84px; border-radius: 6px;" title="Class End Time">
+                    <button type="button" id="att-date-today-btn" class="apple-today-badge-btn" title="Jump to Today">
+                        TODAY
+                    </button>
                 </div>
-                <input type="number" id="att-grace-input" placeholder="+Grace(m)" min="0" max="60" value="15" class="form-input" style="font-size: 0.72rem; padding: 4px 6px; width: 62px; border-radius: 6px;" title="Grace period in minutes">
+            </div>
+
+            <!-- Attendance Schedule Configuration Bar (Class Start & Class End in 12-Hour AM/PM) -->
+            <div style="display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-bottom: 10px; background: rgba(255,255,255,0.04); padding: 8px 12px; border-radius: var(--radius-md); border: 1px solid var(--border-hairline);">
+                <!-- START TIME (12-Hour) -->
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <label style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">START:</label>
+                    <input type="text" id="att-start-12h" value="05:09" maxlength="5" placeholder="hh:mm" class="form-input" style="font-size: 0.74rem; padding: 4px 6px; width: 54px; text-align: center; border-radius: 6px; font-family: var(--font-mono);" title="Class Start Time (hh:mm)">
+                    <button type="button" id="att-start-ampm" class="apple-ampm-pill" title="Toggle AM / PM">PM</button>
+                </div>
+
+                <!-- END TIME (12-Hour) -->
+                <div style="display: flex; align-items: center; gap: 4px;">
+                    <label style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600;">END:</label>
+                    <input type="text" id="att-end-12h" value="05:10" maxlength="5" placeholder="hh:mm" class="form-input" style="font-size: 0.74rem; padding: 4px 6px; width: 54px; text-align: center; border-radius: 6px; font-family: var(--font-mono);" title="Class End Time (hh:mm)">
+                    <button type="button" id="att-end-ampm" class="apple-ampm-pill" title="Toggle AM / PM">PM</button>
+                </div>
+
+                <!-- GRACE PERIOD -->
+                <input type="number" id="att-grace-input" placeholder="+Grace(m)" min="0" max="60" value="15" class="form-input" style="font-size: 0.72rem; padding: 4px 6px; width: 58px; border-radius: 6px;" title="Grace period in minutes">
                 <button type="button" id="att-btn-save-cutoff" class="tool-btn" style="padding: 4px 10px; font-size: 0.7rem; background: var(--cyan-accent); color: #040810; font-weight: 700; border: none; cursor: pointer;">Set</button>
             </div>
 
-            <!-- Summary KPI Badges (Apple Rounded Capsules) -->
-            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 6px; margin-bottom: 10px;">
-                <div style="background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
-                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--emerald-verified); font-family: var(--font-mono);" id="att-stat-present">0</div>
-                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">PRESENT</div>
+            <!-- Summary KPI Badges (4 Clean Statuses: Excused Removed) -->
+            <div style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 5px; margin-bottom: 10px;">
+                <div style="background: rgba(48, 209, 88, 0.1); border: 1px solid rgba(48, 209, 88, 0.25); border-radius: var(--radius-sm); padding: 5px 2px; text-align: center;">
+                    <div style="font-size: 0.90rem; font-weight: 700; color: var(--emerald-verified); font-family: var(--font-mono);" id="att-stat-present">0</div>
+                    <div style="font-size: 0.54rem; color: var(--text-muted); letter-spacing: 0.02em; font-weight: 600;">PRESENT</div>
                 </div>
-                <div style="background: rgba(255, 159, 10, 0.1); border: 1px solid rgba(255, 159, 10, 0.25); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
-                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--amber-warning); font-family: var(--font-mono);" id="att-stat-late">0</div>
-                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">LATE</div>
+                <div style="background: rgba(255, 159, 10, 0.1); border: 1px solid rgba(255, 159, 10, 0.25); border-radius: var(--radius-sm); padding: 5px 2px; text-align: center;">
+                    <div style="font-size: 0.90rem; font-weight: 700; color: var(--amber-warning); font-family: var(--font-mono);" id="att-stat-late">0</div>
+                    <div style="font-size: 0.54rem; color: var(--text-muted); letter-spacing: 0.02em; font-weight: 600;">LATE</div>
                 </div>
-                <div style="background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.22); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
-                    <div style="font-size: 0.95rem; font-weight: 700; color: #f87171; font-family: var(--font-mono);" id="att-stat-absent">0</div>
-                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">ABSENT</div>
+                <div style="background: rgba(234, 179, 8, 0.1); border: 1px solid rgba(234, 179, 8, 0.25); border-radius: var(--radius-sm); padding: 5px 2px; text-align: center;">
+                    <div style="font-size: 0.90rem; font-weight: 700; color: #facc15; font-family: var(--font-mono);" id="att-stat-pending">0</div>
+                    <div style="font-size: 0.54rem; color: var(--text-muted); letter-spacing: 0.02em; font-weight: 600;">PENDING</div>
                 </div>
-                <div style="background: rgba(56, 189, 248, 0.08); border: 1px solid rgba(56, 189, 248, 0.22); border-radius: var(--radius-sm); padding: 6px; text-align: center;">
-                    <div style="font-size: 0.95rem; font-weight: 700; color: var(--cyan-accent); font-family: var(--font-mono);" id="att-stat-total">0</div>
-                    <div style="font-size: 0.58rem; color: var(--text-muted); letter-spacing: 0.04em; font-weight: 600;">STUDENTS</div>
+                <div style="background: rgba(255, 69, 58, 0.08); border: 1px solid rgba(255, 69, 58, 0.22); border-radius: var(--radius-sm); padding: 5px 2px; text-align: center;">
+                    <div style="font-size: 0.90rem; font-weight: 700; color: #f87171; font-family: var(--font-mono);" id="att-stat-absent">0</div>
+                    <div style="font-size: 0.54rem; color: var(--text-muted); letter-spacing: 0.02em; font-weight: 600;">ABSENT</div>
                 </div>
             </div>
 
@@ -133,13 +172,17 @@
                 </div>
             </div>
 
-            <!-- Footer Toolbar with Check All Present & Reset -->
+            <!-- Footer Toolbar with Check All Present, Export CSV & Reset -->
             <div style="display: flex; justify-content: space-between; align-items: center; margin-top: 8px; padding-top: 6px; border-top: 1px solid var(--border-hairline);">
                 <div style="display: flex; align-items: center; gap: 6px;">
                     <span style="font-size: 0.65rem; color: var(--text-muted); font-family: var(--font-mono);" id="att-date-label">TODAY</span>
-                    <button type="button" id="att-btn-check-all" class="tool-btn" style="padding: 2px 7px; font-size: 0.62rem; color: var(--emerald-verified); background: rgba(16,185,129,0.08); border: 1px solid rgba(16,185,129,0.3); border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 3px;" title="Check attendance for all students (Mark All Present)">
-                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
-                        Check All Present
+                    <button type="button" id="att-btn-check-all" class="apple-check-all-btn" title="Check attendance for enrolled students in selected class (Mark All Present)">
+                        <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>
+                        <span>Check All</span>
+                    </button>
+                    <button type="button" id="att-btn-export-csv" class="tool-btn" style="padding: 2px 7px; font-size: 0.62rem; color: var(--cyan-accent); background: rgba(56,189,248,0.08); border: 1px solid rgba(56,189,248,0.3); border-radius: 4px; cursor: pointer; display: inline-flex; align-items: center; gap: 3px;" title="Export attendance as CSV report">
+                        <svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 0 1-2 2H5a2 2 0 0 1-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+                        Export CSV
                     </button>
                 </div>
                 <button type="button" id="att-btn-reset" class="tool-btn" style="padding: 2px 7px; font-size: 0.62rem; color: #f87171; background: transparent; border: 1px solid rgba(244,63,94,0.3); border-radius: 4px; cursor: pointer;" title="Reset today's attendance checklist">Reset</button>
@@ -169,6 +212,51 @@
 
     </aside>
 
+</div>
+
+<!-- ======================================================================
+     TEACHER ATTENDANCE OVERRIDE MODAL DIALOG
+     ====================================================================== -->
+<div class="dossier-modal-backdrop" id="attendance-override-modal" style="display: none;">
+    <div class="dossier-modal-card" style="max-width: 440px;">
+        <div class="dossier-modal-header">
+            <div style="display: flex; align-items: center; gap: 8px;">
+                <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--cyan-accent)" stroke-width="2"><path d="M11 4H4a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h14a2 2 0 0 0 2-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 0 1 3 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
+                <h3 style="font-size: 0.88rem; font-family: var(--font-brand); color: #fff; margin: 0; letter-spacing: -0.01em;">TEACHER ATTENDANCE OVERRIDE</h3>
+            </div>
+            <button type="button" id="btn-close-override-modal" class="drawer-close-btn" style="width: 28px; height: 28px;" aria-label="Close override modal">&times;</button>
+        </div>
+        <div class="dossier-modal-body" style="padding: 16px; display: flex; flex-direction: column; gap: 14px;">
+            <div style="display: flex; align-items: center; gap: 12px; background: rgba(255,255,255,0.03); padding: 10px; border-radius: var(--radius-md); border: 1px solid var(--border-hairline);">
+                <img id="override-modal-avatar" src="/logo.png" alt="Student avatar" style="width: 44px; height: 44px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border-medium); background: #000;">
+                <div>
+                    <div id="override-modal-name" style="font-weight: 700; font-size: 0.88rem; color: #fff;">Student Name</div>
+                    <div id="override-modal-meta" style="font-size: 0.70rem; color: var(--text-muted); font-family: var(--font-mono); margin-top: 2px;">
+                        Current: <span id="override-modal-cur-status" style="color: var(--amber-warning); font-weight: 600;">PENDING</span>
+                    </div>
+                </div>
+            </div>
+
+            <div>
+                <label style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600; display: block; margin-bottom: 6px;">SET ATTENDANCE STATUS:</label>
+                <div style="display: grid; grid-template-columns: repeat(3, 1fr); gap: 6px;" id="override-status-buttons">
+                    <button type="button" class="tool-btn override-btn-status" data-status="PRESENT" style="font-size: 0.68rem; padding: 8px 4px; font-weight: 700; border-color: rgba(48,209,88,0.4); color: var(--emerald-verified);">PRESENT</button>
+                    <button type="button" class="tool-btn override-btn-status" data-status="LATE" style="font-size: 0.68rem; padding: 8px 4px; font-weight: 700; border-color: rgba(255,159,10,0.4); color: var(--amber-warning);">LATE</button>
+                    <button type="button" class="tool-btn override-btn-status" data-status="ABSENT" style="font-size: 0.68rem; padding: 8px 4px; font-weight: 700; border-color: rgba(255,69,58,0.4); color: #f87171;">ABSENT</button>
+                </div>
+            </div>
+
+            <div>
+                <label for="override-reason-input" style="font-size: 0.68rem; color: var(--text-muted); font-family: var(--font-mono); font-weight: 600; display: block; margin-bottom: 6px;">AUDIT OVERRIDE REASON (REQUIRED FOR WAL TRAIL):</label>
+                <textarea id="override-reason-input" class="form-input" rows="2" style="width: 100%; font-size: 0.74rem; border-radius: 6px; resize: none; box-sizing: border-box;" placeholder="e.g. Medical slip, verified visually by teacher, late bus pass..."></textarea>
+            </div>
+
+            <div style="display: flex; justify-content: flex-end; gap: 8px; margin-top: 4px;">
+                <button type="button" id="btn-cancel-override" class="tool-btn" style="padding: 6px 14px; font-size: 0.72rem;">Cancel</button>
+                <button type="button" id="btn-save-override" class="tool-btn btn-accent" style="padding: 6px 14px; font-size: 0.72rem; font-weight: 700;">Save Override</button>
+            </div>
+        </div>
+    </div>
 </div>
 {% endblock %}
 

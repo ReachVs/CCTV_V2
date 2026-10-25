@@ -36,15 +36,15 @@ class IdentityConsensus:
     """
     def __init__(
         self,
-        consensus_votes: int = 2,
-        history_window: int = 5,
+        consensus_votes: int = 4,
+        history_window: int = 6,
         margin_threshold: float = 0.15,
         side_profile_threshold: float = 0.30,
-        max_scanning_attempts: int = 12,
+        max_scanning_attempts: int = 15,
         min_unknown_crops: Optional[int] = None
     ):
         self.consensus_votes = consensus_votes
-        self.history_window = history_window
+        self.history_window = max(history_window, consensus_votes + 2)
         self.margin_threshold = margin_threshold
         self.side_profile_threshold = side_profile_threshold
         self.max_scanning_attempts = max_scanning_attempts
@@ -187,8 +187,6 @@ class IdentityConsensus:
                     and (current_frame - claimant_seen <= 15)
                 )
                 if is_claimant_live:
-                    # If this is a track handoff or existing claimant hasn't been seen in >= 2 frames,
-                    # transfer the identity claim cleanly.
                     if candidate.dist1 <= 0.35 and (current_frame - claimant_seen >= 2 or (active_track_ids and existing_claimant not in active_track_ids)):
                         self.active_identity_claims[matched_name] = track_id
                     else:
@@ -208,40 +206,53 @@ class IdentityConsensus:
                 session.best_norm = norm
 
         # 7. Consensus vote counting
-        if len(history) >= self.consensus_votes:
-            valid_vote_names = [
-                item["name"] for item in history
-                if item["name"] not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person"]
-            ]
-            if valid_vote_names:
-                most_common = max(set(valid_vote_names), key=valid_vote_names.count)
-                vote_count = valid_vote_names.count(most_common)
-                if vote_count >= self.consensus_votes:
-                    # Side-profile consensus guardrail:
-                    # Confirms if at least one frontal/quarter vote exists, or if side-profile matches are
-                    # ultra-high confidence (dist1 <= 0.15) or consistent across >= 3 votes.
-                    has_frontal_confirmation = any(not item.get("is_side", False) for item in history)
-                    is_confident_side = is_side and (candidate.dist1 <= 0.15 or vote_count >= self.consensus_votes + 1)
-                    if has_frontal_confirmation or not is_side or is_confident_side:
-                        session.confirm_identity(most_common, distance=candidate.dist1, norm=norm)
-                        self.active_identity_claims[most_common] = track_id
-                        return ConsensusDecision(
-                            display_name=session.display_name,
-                            status=session.status,
-                            is_confirmed=True,
-                            confidence=0.85,
-                            telemetry={
-                                "dist1": candidate.dist1,
-                                "dist2": candidate.dist2,
-                                "norm": norm,
-                                "confirmed": True,
-                                "votes": vote_count
-                            }
-                        )
+        valid_vote_names = [
+            item["name"] for item in history
+            if item["name"] not in ["Unknown", "Ambiguous Match", "Scanning", "Unknown Person"]
+        ]
+        if valid_vote_names:
+            most_common = max(set(valid_vote_names), key=valid_vote_names.count)
+            vote_count = valid_vote_names.count(most_common)
+            if vote_count >= self.consensus_votes:
+                has_frontal_confirmation = any(not item.get("is_side", False) for item in history)
+                is_confident_side = is_side and (candidate.dist1 <= 0.15 or vote_count >= self.consensus_votes + 1)
+                if has_frontal_confirmation or not is_side or is_confident_side:
+                    session.confirm_identity(most_common, distance=candidate.dist1, norm=norm)
+                    self.active_identity_claims[most_common] = track_id
+                    return ConsensusDecision(
+                        display_name=session.display_name,
+                        status=session.status,
+                        is_confirmed=True,
+                        confidence=0.85,
+                        telemetry={
+                            "dist1": candidate.dist1,
+                            "dist2": candidate.dist2,
+                            "norm": norm,
+                            "confirmed": True,
+                            "votes": vote_count,
+                            "required_votes": self.consensus_votes
+                        }
+                    )
+            elif vote_count >= 1:
+                # Accumulating consensus votes: live visual feedback
+                verifying_display = f"Verifying: {most_common} ({vote_count}/{self.consensus_votes})"
+                return ConsensusDecision(
+                    display_name=verifying_display,
+                    status=TrackStatus.SCANNING,
+                    is_confirmed=False,
+                    confidence=0.60,
+                    telemetry={
+                        "dist1": candidate.dist1,
+                        "dist2": candidate.dist2,
+                        "norm": norm,
+                        "confirmed": False,
+                        "verifying_name": most_common,
+                        "votes": vote_count,
+                        "required_votes": self.consensus_votes
+                    }
+                )
 
-        # 8. Check for Unknown Person transition:
-        # Categorize as Unknown Person ONLY if unmatched valid crops reach min_unknown_crops
-        # with genuine non-matching biometric distance (dist1 >= 0.85), AND there are NO valid known-identity votes in history!
+        # 8. Check for Unknown Person / Unusual Person transition:
         is_genuine_stranger = (
             matched_name in ["Unknown", "Unknown Person"]
             and getattr(candidate, "dist1", 0.0) >= 0.85
@@ -259,11 +270,13 @@ class IdentityConsensus:
                 status=session.status,
                 is_confirmed=True,
                 confidence=0.50,
-                telemetry={"valid_face_crops": session.valid_face_crops, "confirmed": True}
+                telemetry={
+                    "valid_face_crops": session.valid_face_crops,
+                    "confirmed": True,
+                    "unusual_person": True
+                }
             )
         elif not session.is_confirmed and session.attempts >= self.max_scanning_attempts:
-            # Motion blur or temporary scanning timeout: fall back to unverified scanning,
-            # NEVER declare Access Denied / Unknown Person.
             session.mark_unverified()
             return ConsensusDecision(
                 display_name=session.display_name,

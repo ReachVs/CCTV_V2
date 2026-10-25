@@ -14,9 +14,9 @@ os.makedirs(DATA_DIR, exist_ok=True)
 DB_PATH = os.path.join(DATA_DIR, "faces.db")
 FACES_DIR = os.path.join(DATA_DIR, "known_faces")
 
-def initialize_database():
-    print(f"[Database Setup] Initializing SQLite database at: '{DB_PATH}'")
-    conn = sqlite3.connect(DB_PATH)
+def initialize_database(db_path: str = DB_PATH):
+    print(f"[Database Setup] Initializing SQLite database at: '{db_path}'")
+    conn = sqlite3.connect(db_path)
     cursor = conn.cursor()
     cursor.execute("PRAGMA journal_mode=WAL;")
     cursor.execute("PRAGMA synchronous=NORMAL;")
@@ -35,6 +35,65 @@ def initialize_database():
             track_id INTEGER NOT NULL,
             match_distance REAL NOT NULL,
             snapshot_path TEXT
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS courses (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            code TEXT NOT NULL UNIQUE,
+            name TEXT NOT NULL,
+            department TEXT DEFAULT 'GENERAL',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS schedules (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+            day_of_week INTEGER NOT NULL,
+            start_time TEXT NOT NULL,
+            end_time TEXT NOT NULL,
+            grace_minutes INTEGER DEFAULT 15,
+            is_active INTEGER DEFAULT 1,
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS course_enrollments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            course_id INTEGER NOT NULL REFERENCES courses(id) ON DELETE CASCADE,
+            person_name TEXT NOT NULL,
+            enrolled_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(course_id, person_name)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance_records (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            date TEXT NOT NULL,
+            person_name TEXT NOT NULL,
+            check_in_time TEXT NOT NULL,
+            status TEXT NOT NULL,
+            track_id INTEGER DEFAULT 0,
+            match_distance REAL DEFAULT 0.0,
+            snapshot_path TEXT DEFAULT '',
+            course_id INTEGER DEFAULT NULL,
+            is_manual INTEGER DEFAULT 0,
+            override_reason TEXT DEFAULT '',
+            created_at TEXT DEFAULT CURRENT_TIMESTAMP,
+            UNIQUE(date, person_name)
+        )
+    """)
+    cursor.execute("""
+        CREATE TABLE IF NOT EXISTS attendance_audit_log (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            attendance_id INTEGER,
+            person_name TEXT NOT NULL,
+            old_status TEXT NOT NULL,
+            new_status TEXT NOT NULL,
+            reason TEXT NOT NULL,
+            changed_by TEXT DEFAULT 'TEACHER',
+            changed_at TEXT DEFAULT CURRENT_TIMESTAMP
         )
     """)
     conn.commit()

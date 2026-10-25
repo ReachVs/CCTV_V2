@@ -91,8 +91,15 @@ class SubjectSession:
 
     def confirm_identity(self, name: str, distance: float, norm: float = 1.0) -> None:
         """Transitions subject to CONFIRMED identity."""
+        clean_name = str(name).strip()
+        if clean_name.startswith("Verified: "):
+            clean_name = clean_name.removeprefix("Verified: ").strip()
+        if clean_name.startswith("Verifying: "):
+            clean_name = clean_name.removeprefix("Verifying: ").strip()
+            if "(" in clean_name and clean_name.endswith(")"):
+                clean_name = clean_name[:clean_name.rfind("(")].strip()
         self.status = TrackStatus.CONFIRMED
-        self.identity_name = name
+        self.identity_name = clean_name
         self.confidence = 0.85
         self.best_dist = distance
         self.best_norm = max(self.best_norm, norm)

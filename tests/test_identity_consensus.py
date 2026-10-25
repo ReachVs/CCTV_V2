@@ -126,6 +126,43 @@ class TestIdentityConsensus(unittest.TestCase):
         self.assertEqual(session.status, TrackStatus.CONFIRMED)
         self.assertEqual(d2.display_name, "Ceaser")
 
+    def test_k4_consecutive_consensus_and_verifying_display(self):
+        """Verifies K=4 consensus accumulation display: Verifying: Name (x/4) -> Confirmed."""
+        k4_consensus = IdentityConsensus(
+            consensus_votes=4,
+            history_window=6,
+            margin_threshold=0.15,
+            side_profile_threshold=0.30,
+            max_scanning_attempts=15
+        )
+        session = SubjectSession(track_id=55, first_seen=1, last_seen=3, box=(0, 0, 50, 50))
+        cand = MatchCandidate(name="John Doe", dist1=0.20, dist2=0.85, norm=1.2, is_side_profile=False)
+
+        # Vote 1
+        d1 = k4_consensus.evaluate(session, cand, current_frame=3)
+        self.assertFalse(d1.is_confirmed)
+        self.assertEqual(d1.display_name, "Verifying: John Doe (1/4)")
+
+        # Vote 2
+        session.last_seen = 4
+        d2 = k4_consensus.evaluate(session, cand, current_frame=4)
+        self.assertFalse(d2.is_confirmed)
+        self.assertEqual(d2.display_name, "Verifying: John Doe (2/4)")
+
+        # Vote 3
+        session.last_seen = 5
+        d3 = k4_consensus.evaluate(session, cand, current_frame=5)
+        self.assertFalse(d3.is_confirmed)
+        self.assertEqual(d3.display_name, "Verifying: John Doe (3/4)")
+
+        # Vote 4 -> Reaches K=4 consensus!
+        session.last_seen = 6
+        d4 = k4_consensus.evaluate(session, cand, current_frame=6)
+        self.assertTrue(d4.is_confirmed)
+        self.assertEqual(session.status, TrackStatus.CONFIRMED)
+        self.assertEqual(d4.display_name, "John Doe")
+
 
 if __name__ == "__main__":
     unittest.main()
+

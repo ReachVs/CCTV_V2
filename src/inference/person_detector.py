@@ -98,19 +98,17 @@ class UltralyticsPersonDetector(PersonDetector):
                         c = res.boxes.conf.cpu().numpy() if res.boxes.conf is not None else [1.0] * len(b)
                         if res.boxes.id is not None:
                             t = res.boxes.id.cpu().numpy().astype(int)
-                        else:
-                            t = list(range(1, len(b) + 1))
-                        for i in range(len(b)):
-                            detections.append(DetectedBox(
-                                box=[float(x) for x in b[i]],
-                                conf=float(c[i]),
-                                track_id=int(t[i])
-                            ))
+                            for i in range(len(b)):
+                                detections.append(DetectedBox(
+                                    box=[float(x) for x in b[i]],
+                                    conf=float(c[i]),
+                                    track_id=int(t[i])
+                                ))
             except Exception:
                 pass
 
-        # 2. Haar Cascade Fallback when no bodies are tracked
-        if len(detections) == 0 and self.enable_haar and self.haar_cascade is not None:
+        # 2. Vision Fallback only when Neural YOLO model is absent/uninitialized
+        if len(detections) == 0 and self.yolo_model is None and self.enable_haar and self.haar_cascade is not None:
             try:
                 target_h, target_w = frame.shape[:2]
                 gray = cv2.cvtColor(frame, cv2.COLOR_BGR2GRAY)

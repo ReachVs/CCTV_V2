@@ -140,7 +140,9 @@ class TestSecurityAndResilience(unittest.TestCase):
     def test_audit_key_file_permissions(self):
         """Verify generated .audit_key is created with restricted 0o600 permissions."""
         import stat
-        from src.database.audit_repository import EncryptedWALAuditLogger
+        from src.database.audit_repository import EncryptedWALAuditLogger, Fernet
+        if Fernet is None:
+            self.skipTest("cryptography library is not installed in the environment")
         test_db = os.path.join(self.temp_dir.name, "perms_test.db")
         logger = EncryptedWALAuditLogger(db_path=test_db)
         key_file = os.path.join(self.temp_dir.name, ".audit_key")
@@ -180,6 +182,118 @@ class TestSecurityAndResilience(unittest.TestCase):
         if res is not None:
             self.assertEqual(os.path.commonpath([KNOWN_FACES_DIR, res]), KNOWN_FACES_DIR)
 
+    def test_rate_limiter_blocks_excessive_requests(self):
+        """Verify in-memory sliding window rate limiter throttles traffic exceeding threshold."""
+        from src.api.security import InMemoryRateLimiter
+        limiter = InMemoryRateLimiter(max_requests=3, window_seconds=10.0)
+        ip = "192.168.1.100"
+        self.assertTrue(limiter.is_allowed(ip))
+        self.assertTrue(limiter.is_allowed(ip))
+        self.assertTrue(limiter.is_allowed(ip))
+        # 4th request must be rejected
+        self.assertFalse(limiter.is_allowed(ip))
+
+    def test_safe_file_response_guards(self):
+        """Verify safe_file_response enforces extensions and path containment."""
+        from fastapi import HTTPException
+        from src.api.security import safe_file_response
+
+        # Traversal attempts
+        with self.assertRaises(HTTPException) as ctx:
+            safe_file_response(self.temp_dir.name, "../../../etc/passwd")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        # Illegal extension
+        test_txt = os.path.join(self.temp_dir.name, "malicious.sh")
+        with open(test_txt, "w") as f:
+            f.write("echo hack")
+        with self.assertRaises(HTTPException) as ctx:
+            safe_file_response(self.temp_dir.name, "malicious.sh")
+        self.assertEqual(ctx.exception.status_code, 400)
+
+        # Valid image delivers cleanly
+        test_img = os.path.join(self.temp_dir.name, "valid.jpg")
+        with open(test_img, "wb") as f:
+            f.write(b"\xff\xd8\xff\xe0\x00\x10JFIF")
+        resp = safe_file_response(self.temp_dir.name, "valid.jpg")
+        self.assertEqual(resp.status_code, 200)
+
+    def test_websocket_origin_validation(self):
+        """Verify Cross-Site WebSocket Hijacking defense blocks unauthorized origins."""
+        from unittest.mock import MagicMock
+        from src.api.security import is_allowed_websocket_origin
+
+        # Localhost / loopback allowed
+        ws_local = MagicMock()
+        ws_local.headers = {"origin": "http://localhost:8000", "host": "localhost:8000"}
+        self.assertTrue(is_allowed_websocket_origin(ws_local))
+
+        # Evil external origin blocked
+        ws_evil = MagicMock()
+        ws_evil.headers = {"origin": "https://evil-attacker-site.com", "host": "192.168.1.50:8000"}
+        self.assertFalse(is_allowed_websocket_origin(ws_evil))
+
+        # Direct non-browser clients without origin allowed
+        ws_non_browser = MagicMock()
+        ws_non_browser.headers = {"host": "127.0.0.1:8000"}
+        self.assertTrue(is_allowed_websocket_origin(ws_non_browser))
+
+    def test_subject_dossier_pii_redaction(self):
+        """Verify sensitive PII is masked for non-admin viewers and unmasked for admins."""
+        from src.api.security import sanitize_subject_dossier
+        raw_meta = {
+            "name": "Jane Doe",
+            "phone": "+855 12 345 6789",
+            "address": "Street 271, Phnom Penh",
+            "dob": "1998-05-12",
+            "clearance": "LEVEL 3 TOP SECRET",
+            "threat_level": "CRITICAL"
+        }
+
+        # Non-admin viewing
+        redacted = sanitize_subject_dossier(raw_meta, is_admin=False)
+        self.assertEqual(redacted["phone"], "***-***-6789")
+        self.assertEqual(redacted["address"], "REDACTED (RESTRICTED)")
+        self.assertEqual(redacted["dob"], "REDACTED (RESTRICTED)")
+        self.assertEqual(redacted["clearance"], "RESTRICTED (AUTHENTICATION REQUIRED)")
+        self.assertEqual(redacted["threat_level"], "CONFIDENTIAL")
+
+        # Admin viewing
+        admin_meta = sanitize_subject_dossier(raw_meta, is_admin=True)
+        self.assertEqual(admin_meta["phone"], "+855 12 345 6789")
+        self.assertEqual(admin_meta["clearance"], "LEVEL 3 TOP SECRET")
+
+    def test_admin_auth_verification(self):
+        """Verify API key authentication handles matching keys and rejects invalid ones."""
+        from unittest.mock import MagicMock
+        from src.api.security import is_admin_request
+
+        os.environ["CCTV_API_KEY"] = "super-secret-key-42"
+        try:
+            # Valid header
+            req_valid = MagicMock()
+            req_valid.headers = {"X-API-Key": "super-secret-key-42"}
+            req_valid.cookies = {}
+            req_valid.query_params = {}
+            self.assertTrue(is_admin_request(req_valid))
+
+            # Invalid header
+            req_invalid = MagicMock()
+            req_invalid.headers = {"X-API-Key": "wrong-key"}
+            req_invalid.cookies = {}
+            req_invalid.query_params = {}
+            self.assertFalse(is_admin_request(req_invalid))
+
+            # Valid bearer
+            req_bearer = MagicMock()
+            req_bearer.headers = {"Authorization": "Bearer super-secret-key-42"}
+            req_bearer.cookies = {}
+            req_bearer.query_params = {}
+            self.assertTrue(is_admin_request(req_bearer))
+        finally:
+            del os.environ["CCTV_API_KEY"]
+
 
 if __name__ == "__main__":
     unittest.main()
+

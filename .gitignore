@@ -74,4 +74,6 @@ yarn-error.log*
 *.webm
 stress_occlusion.mp4
 
-
+# Machine Learning Packages & Compiled Models
+*.mlpackage/
+*.mlpackage

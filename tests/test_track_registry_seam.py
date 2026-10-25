@@ -197,6 +197,29 @@ class TestTrackRegistrySeam(unittest.TestCase):
         self.assertIn(2, expired)
         self.assertNotIn(3, expired)
 
+    def test_verifying_consensus_not_prematurely_confirmed(self):
+        """Verifies that transient vote accumulation string does not trigger premature identity confirmation."""
+        registry = TrackRegistry()
+        sess = registry.get_or_create(5, (100, 100, 200, 200), current_frame=1)
+
+        # 1. Setting active_tracks to Verifying: Ceaser (1/2) must keep track in SCANNING state
+        registry.active_tracks[5] = "Verifying: Ceaser (1/2)"
+        self.assertFalse(sess.is_confirmed)
+        self.assertEqual(sess.status, TrackStatus.SCANNING)
+        self.assertEqual(sess.display_name, "Verifying: Ceaser (1/2)")
+
+        # 2. Setting track_cache name to Verifying: Ceaser (1/2) must not confirm
+        registry.track_cache[5]["name"] = "Verifying: Ceaser (1/2)"
+        self.assertFalse(sess.is_confirmed)
+        self.assertEqual(sess.status, TrackStatus.SCANNING)
+
+        # 3. Confirming identity must sanitize Verifying / Verified prefixes
+        sess.confirm_identity("Verifying: Ceaser (1/2)", 0.25)
+        self.assertTrue(sess.is_confirmed)
+        self.assertEqual(sess.status, TrackStatus.CONFIRMED)
+        self.assertEqual(sess.identity_name, "Ceaser")
+        self.assertEqual(sess.display_name, "Ceaser")
+
 
 if __name__ == "__main__":
     unittest.main()

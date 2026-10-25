@@ -137,6 +137,8 @@ class TestAttendanceRoutes(unittest.TestCase):
         from src.api.cctv_server import _process_cctv_frame, engine
         import numpy as np
 
+        attendance_service.set_schedule("00:00:00", "23:59:59", grace_period_minutes=15)
+
         class MockTrack:
             track_id = 999
             confirmed_name = "Ceaser"
@@ -157,7 +159,68 @@ class TestAttendanceRoutes(unittest.TestCase):
         finally:
             engine.get_active_tracks = orig_tracks
 
+    def test_unusual_person_and_courses_routes(self):
+        """Verifies unusual person alerts, dismissal, audit log, and courses REST endpoints."""
+        from src.api.cctv_server import (
+            get_unusual_persons,
+            dismiss_unusual_person,
+            get_attendance_audit,
+            list_courses,
+            create_course,
+            enroll_student_in_course,
+            get_course_roster,
+            unusual_service
+        )
+        from src.api.schemas import (
+            UnusualPersonDismissRequest,
+            CourseCreateRequest,
+            CourseEnrollStudentRequest
+        )
+
+        # 1. Unusual alert recording & query
+        unusual_service.record_alert(track_id=777, timestamp_str="2026-10-22 11:00:00")
+        alerts_res = asyncio.run(get_unusual_persons())
+        self.assertEqual(alerts_res.status, "success")
+        matching = [a for a in alerts_res.alerts if a.track_id == 777]
+        self.assertEqual(len(matching), 1)
+
+        # 2. Dismiss alert
+        dis_res = asyncio.run(dismiss_unusual_person(UnusualPersonDismissRequest(track_id=777)))
+        self.assertEqual(dis_res.status_code, 200)
+
+        # 3. Course creation & roster enrollment
+        import time as pytime
+        c_req = CourseCreateRequest(code=f"TEST_{int(pytime.time() * 1000)}", name="Test Course")
+        c_res = asyncio.run(create_course(c_req))
+        self.assertEqual(c_res.status_code, 200)
+        import json
+        c_data = json.loads(c_res.body)
+        cid = c_data["course"]["id"]
+
+        e_res = asyncio.run(enroll_student_in_course(cid, CourseEnrollStudentRequest(person_name="New Student")))
+        self.assertEqual(e_res.status_code, 200)
+
+        r_res = asyncio.run(get_course_roster(cid))
+        self.assertEqual(r_res.status_code, 200)
+        r_data = json.loads(r_res.body)
+        self.assertIn("New Student", r_data["students"])
+
+        # 4. Audit log route
+        audit_res = asyncio.run(get_attendance_audit())
+        self.assertEqual(audit_res.status_code, 200)
+
+    def test_export_attendance_csv(self):
+        from src.api.cctv_server import export_attendance_csv
+        res = asyncio.run(export_attendance_csv())
+        self.assertEqual(res.status_code, 200)
+        self.assertEqual(res.media_type, "text/csv")
+        self.assertIn("attachment; filename=", res.headers["Content-Disposition"])
+        self.assertIn(b"Student Name,Occupation,Date,Status,Check-in Time,Method,Override Reason", res.body)
+
 
 if __name__ == "__main__":
     unittest.main()
+
+    unittest.main()
+
 

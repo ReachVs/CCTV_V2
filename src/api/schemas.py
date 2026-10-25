@@ -141,12 +141,14 @@ class AttendanceConfigResponse(BaseSchema):
 
 class AttendanceChecklistItem(BaseSchema):
     person_name: str
-    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, or ABSENT")
+    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, ABSENT, PENDING, or MANUAL_PRESENT")
     check_in_time: Optional[str] = None
     track_id: Optional[int] = None
     occupation: Optional[str] = "STUDENT"
     clearance: Optional[str] = "REGISTERED"
     snapshot_path: Optional[str] = ""
+    is_manual: Optional[int] = 0
+    override_reason: Optional[str] = ""
 
 
 class AttendanceChecklistResponse(BaseSchema):
@@ -160,20 +162,69 @@ class AttendanceChecklistResponse(BaseSchema):
     present_count: int
     late_count: int
     absent_count: int
+    pending_count: Optional[int] = 0
+    excused_count: Optional[int] = 0
     attended_count: int
     attendance_rate: Optional[float] = 0.0
     checklist: List[AttendanceChecklistItem] = Field(default_factory=list)
+    course: Optional[Dict[str, Any]] = None
 
 
 class AttendanceManualMarkRequest(BaseSchema):
     person_name: str
-    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, or ABSENT")
+    status: str = Field(..., example="PRESENT", description="PRESENT, LATE, ABSENT, or MANUAL_PRESENT")
     date: Optional[str] = None
     custom_time: Optional[str] = None
+    reason: Optional[str] = ""
+    course_id: Optional[int] = None
 
 
 class AttendanceCheckAllRequest(BaseSchema):
     status: Optional[str] = Field(default="PRESENT", example="PRESENT", description="PRESENT, LATE, or ABSENT")
     date: Optional[str] = None
+    course_id: Optional[int] = None
+
+
+class UnusualPersonAlertItem(BaseSchema):
+    track_id: int
+    first_seen: str
+    last_seen: str
+    snapshot_path: Optional[str] = ""
+    snapshot_url: Optional[str] = ""
+    status: str = "ACTIVE"
+    metadata: Optional[Dict[str, Any]] = Field(default_factory=dict)
+
+
+class UnusualPersonListResponse(BaseSchema):
+    status: str = Field(default="success")
+    alerts: List[UnusualPersonAlertItem] = Field(default_factory=list)
+    total_alerts: int = 0
+
+
+class UnusualPersonDismissRequest(BaseSchema):
+    track_id: int
+
+
+class UnusualPersonEnrollRequest(BaseSchema):
+    track_id: int
+    person_name: str
+
+
+class CourseCreateRequest(BaseSchema):
+    code: str
+    name: str
+    department: Optional[str] = "GENERAL"
+
+
+class CourseEnrollStudentRequest(BaseSchema):
+    person_name: str
+
+
+class ScheduleCreateRequest(BaseSchema):
+    day_of_week: int
+    start_time: str
+    end_time: str
+    grace_minutes: Optional[int] = 15
+
 
 

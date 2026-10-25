@@ -156,6 +156,42 @@ class TestIdentityObserverSeam(unittest.TestCase):
         self.assertEqual(mock_audit_logger.log_event.call_count, 2)
         self.assertEqual(cooldown_dict.get("Student X"), 165)
 
+    def test_unusual_person_detected_event_dispatch(self):
+        """Verifies UnusualPersonDetectedEvent immutability and dispatch_unusual_person routing."""
+        from src.domain.identity_observer import UnusualPersonDetectedEvent
+
+        event = UnusualPersonDetectedEvent(
+            track_id=88,
+            first_seen_frame=10,
+            frame_num=25,
+            timestamp_str="2026-10-22 10:30:00",
+            snapshot_path="/data/unusual/crop_88.jpg",
+            metadata={"valid_face_crops": 15}
+        )
+        self.assertEqual(event.track_id, 88)
+        self.assertEqual(event.snapshot_path, "/data/unusual/crop_88.jpg")
+        with self.assertRaises(FrozenInstanceError):
+            event.track_id = 99
+
+        dispatcher = IdentityEventDispatcher()
+        received_unusual = []
+
+        class UnusualObserver(IdentityObserver):
+            def on_identity_confirmed(self, e: IdentityConfirmedEvent) -> None:
+                pass
+
+            def on_unusual_person_detected(self, e: UnusualPersonDetectedEvent) -> None:
+                received_unusual.append(e)
+
+        obs = UnusualObserver()
+        dispatcher.register(obs)
+        dispatcher.dispatch_unusual_person(event)
+
+        self.assertEqual(len(received_unusual), 1)
+        self.assertEqual(received_unusual[0].track_id, 88)
+        self.assertEqual(received_unusual[0].snapshot_path, "/data/unusual/crop_88.jpg")
+
 
 if __name__ == "__main__":
     unittest.main()
+

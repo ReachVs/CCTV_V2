@@ -29,6 +29,27 @@ class CCTVClient {
         this.lastFpsTimestamp = performance.now();
         this.scanlinesEnabled = true;
         this.lastTelemetryRenderTime = 0;
+
+        // Course & timetable tracking
+        this.selectedCourseId = null;
+        this.coursesList = [];
+        this.courseSelect = document.getElementById('att-course-select');
+
+        // Apple Date Picker state (§1, §4, §12)
+        const todayObj = new Date();
+        const year = todayObj.getFullYear();
+        const month = String(todayObj.getMonth() + 1).padStart(2, '0');
+        const day = String(todayObj.getDate()).padStart(2, '0');
+        this.selectedDate = `${year}-${month}-${day}`;
+
+        // Teacher override modal state
+        this.activeOverrideStudent = null;
+        this.overrideSelectedStatus = 'PRESENT';
+        this.overrideModal = document.getElementById('attendance-override-modal');
+
+        // Unusual person / intruder state
+        this.unusualAlerts = [];
+        this.unusualAlertsContainer = document.getElementById('unusual-alert-container');
     }
 
     init() {
@@ -36,9 +57,12 @@ class CCTVClient {
         this.initAudioContext();
         this.connectWebSocket();
         this.initEventListeners();
+        this.setupDateControls();
         this.startTelemetryPollingFallback();
         this.fetchInitialStats();
         this.fetchAttendanceConfig();
+        this.fetchCourses();
+        this.fetchUnusualAlerts();
         this.fetchAttendanceChecklist();
     }
 
@@ -47,9 +71,12 @@ class CCTVClient {
             const now = new Date();
             const cambodiaTz = 'Asia/Phnom_Penh';
             if (this.clockTimeEl) {
-                this.clockTimeEl.textContent = now.toLocaleTimeString('en-GB', {
+                this.clockTimeEl.textContent = now.toLocaleTimeString('en-US', {
                     timeZone: cambodiaTz,
-                    hour12: false
+                    hour: 'numeric',
+                    minute: '2-digit',
+                    second: '2-digit',
+                    hour12: true
                 }) + ' ICT';
             }
             if (this.clockDateEl) {
@@ -223,6 +250,27 @@ class CCTVClient {
         } catch (_) {}
     }
 
+    formatTo12Hour(timeStr, includeSeconds = false) {
+        if (!timeStr || typeof timeStr !== 'string') return '--:--';
+        const clean = timeStr.trim();
+        if (clean.includes('AM') || clean.includes('PM') || clean.includes('am') || clean.includes('pm')) {
+            return clean;
+        }
+        const parts = clean.split(':');
+        if (parts.length < 2) return clean;
+        let hours = parseInt(parts[0], 10);
+        const minutes = parts[1].padStart(2, '0');
+        const seconds = parts[2] ? parts[2].padStart(2, '0') : '';
+        if (isNaN(hours)) return clean;
+        const period = hours >= 12 ? 'PM' : 'AM';
+        hours = hours % 12;
+        if (hours === 0) hours = 12;
+        if (includeSeconds && seconds) {
+            return `${hours}:${minutes}:${seconds} ${period}`;
+        }
+        return `${hours}:${minutes} ${period}`;
+    }
+
     startTelemetryPollingFallback() {
         setInterval(async () => {
             try {
@@ -241,9 +289,10 @@ class CCTVClient {
                 }
             } catch (_) {}
 
-            // Periodically refresh attendance checklist
+            // Periodically refresh attendance checklist and unusual person alerts
             try {
                 await this.fetchAttendanceChecklist();
+                await this.fetchUnusualAlerts();
             } catch (_) {}
         }, 1500);
     }
@@ -392,8 +441,12 @@ class CCTVClient {
         this.auditListEl.innerHTML = filtered.slice(0, 20).map(e => {
             const name = e.person_name || e.name || 'Subject';
             const action = e.action || 'VERIFIED';
-            const clearance = e.meta?.clearance || e.clearance || 'LEVEL 1';
-            const timeStr = e.timestamp ? (e.timestamp.split('T')[1]?.split('.')[0] || e.timestamp) : 'NOW';
+            let rawTime = e.timestamp ? (e.timestamp.split('T')[1]?.split('.')[0] || e.timestamp) : 'NOW';
+            if (rawTime.includes(' ')) {
+                const spaceParts = rawTime.split(' ');
+                rawTime = spaceParts[spaceParts.length - 1];
+            }
+            const timeStr = this.formatTo12Hour(rawTime, true);
             const isAlert = action.includes('DENIED') || action.includes('UNKNOWN');
             const isKnown = name && name !== 'Subject' && name !== 'Unknown' && !name.startsWith('Scanning') && !name.startsWith('Unverified');
             const auditClick = isKnown ? `onclick="window.cctvClient && window.cctvClient.openDossierModal('${this.escapeHtml(name)}', '${encodeURIComponent(e.track_id || '')}')" style="cursor: pointer;"` : `style="cursor: default;"`;
@@ -703,38 +756,99 @@ class CCTVClient {
             this.telemetryContainer.addEventListener('mouseleave', () => { this._isHoveringTelemetry = false; });
         }
 
-        // Attendance Save Schedule button (Class Start & End)
+        // Attendance Save Schedule button (Class Start & End in 12-Hour AM/PM)
         const saveCutoffBtn = document.getElementById('att-btn-save-cutoff');
-        const startInput = document.getElementById('att-start-time-input') || document.getElementById('att-time-input');
-        const endInput = document.getElementById('att-end-time-input');
+        const start12hInput = document.getElementById('att-start-12h');
+        const startAmpmBtn = document.getElementById('att-start-ampm');
+        const end12hInput = document.getElementById('att-end-12h');
+        const endAmpmBtn = document.getElementById('att-end-ampm');
         const graceInput = document.getElementById('att-grace-input');
+
+        // Toggle AM/PM on click
+        const toggleAmpm = (btn) => {
+            if (!btn) return;
+            const cur = btn.textContent.trim().toUpperCase();
+            if (cur === 'PM') {
+                btn.textContent = 'AM';
+                btn.classList.add('am');
+            } else {
+                btn.textContent = 'PM';
+                btn.classList.remove('am');
+            }
+        };
+
+        if (startAmpmBtn) startAmpmBtn.addEventListener('click', () => toggleAmpm(startAmpmBtn));
+        if (endAmpmBtn) endAmpmBtn.addEventListener('click', () => toggleAmpm(endAmpmBtn));
+
         if (saveCutoffBtn) {
             const handleSave = () => {
-                const startVal = startInput ? startInput.value : '18:00';
-                const endVal = endInput ? endInput.value : '21:00';
+                const parseTo24h = (timeVal, ampmVal) => {
+                    let [hh, mm] = (timeVal || '12:00').trim().split(':');
+                    let h = parseInt(hh, 10) || 12;
+                    let m = parseInt(mm, 10) || 0;
+                    const isPm = (ampmVal || 'PM').toUpperCase() === 'PM';
+                    if (isPm && h < 12) h += 12;
+                    if (!isPm && h === 12) h = 0;
+                    return `${String(h).padStart(2, '0')}:${String(m).padStart(2, '0')}:00`;
+                };
+
+                const startVal = parseTo24h(start12hInput ? start12hInput.value : '05:09', startAmpmBtn ? startAmpmBtn.textContent : 'PM');
+                const endVal = parseTo24h(end12hInput ? end12hInput.value : '05:10', endAmpmBtn ? endAmpmBtn.textContent : 'PM');
                 const grace = parseInt(graceInput ? graceInput.value : '15', 10) || 0;
-                if (startVal) {
-                    this.saveAttendanceConfig(startVal, endVal, grace);
+
+                // Client-side validation: Class End Time must be strictly after Class Start Time
+                if (endVal <= startVal) {
+                    alert(`Invalid Schedule Conflict:\nClass End Time (${this.formatTo12Hour(endVal)}) cannot be earlier than or equal to Class Start Time (${this.formatTo12Hour(startVal)}).\n\nPlease verify that your START and END times, including AM/PM, are configured in chronological order.`);
+                    if (end12hInput) {
+                        end12hInput.style.borderColor = '#ef4444';
+                        end12hInput.focus();
+                        setTimeout(() => { if (end12hInput) end12hInput.style.borderColor = ''; }, 3000);
+                    }
+                    return;
                 }
+
+                this.saveAttendanceConfig(startVal, endVal, grace);
             };
             saveCutoffBtn.addEventListener('click', handleSave);
-            if (startInput) {
-                startInput.addEventListener('keydown', (e) => {
+            if (start12hInput) {
+                start12hInput.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') handleSave();
                 });
             }
-            if (endInput) {
-                endInput.addEventListener('keydown', (e) => {
+            if (end12hInput) {
+                end12hInput.addEventListener('keydown', (e) => {
                     if (e.key === 'Enter') handleSave();
                 });
             }
         }
 
-        // Attendance Check All button
+        // Apple Date Control Bar Handlers
+        const prevDateBtn = document.getElementById('att-date-prev');
+        if (prevDateBtn) {
+            prevDateBtn.addEventListener('click', () => this.shiftSelectedDate(-1));
+        }
+        const nextDateBtn = document.getElementById('att-date-next');
+        if (nextDateBtn) {
+            nextDateBtn.addEventListener('click', () => this.shiftSelectedDate(1));
+        }
+        const todayDateBtn = document.getElementById('att-date-today-btn');
+        if (todayDateBtn) {
+            todayDateBtn.addEventListener('click', () => this.resetDateToToday());
+        }
+
+        // Attendance Check All button (Marks all enrolled students in class)
         const checkAllBtn = document.getElementById('att-btn-check-all');
         if (checkAllBtn) {
             checkAllBtn.addEventListener('click', () => {
                 this.checkAllAttendance('PRESENT');
+            });
+        }
+
+        // Attendance Export CSV button
+        const exportCsvBtn = document.getElementById('att-btn-export-csv');
+        if (exportCsvBtn) {
+            exportCsvBtn.addEventListener('click', () => {
+                this.exportAttendanceCSV();
             });
         }
 
@@ -748,7 +862,34 @@ class CCTVClient {
             });
         }
 
-        // Delegated click for manual attendance status toggling and row checkmarks
+        // Course Selector dropdown
+        if (this.courseSelect) {
+            this.courseSelect.addEventListener('change', () => {
+                const val = this.courseSelect.value;
+                this.selectedCourseId = val ? parseInt(val, 10) : null;
+                this.fetchAttendanceChecklist();
+            });
+        }
+
+        // Pinned Unusual Person Alerts actions
+        if (this.unusualAlertsContainer) {
+            this.unusualAlertsContainer.addEventListener('click', (e) => {
+                const disBtn = e.target.closest('.btn-unusual-dismiss');
+                if (disBtn) {
+                    const trackId = disBtn.getAttribute('data-track-id');
+                    if (trackId) this.dismissUnusualAlert(trackId);
+                    return;
+                }
+                const enrollBtn = e.target.closest('.btn-unusual-enroll');
+                if (enrollBtn) {
+                    const trackId = enrollBtn.getAttribute('data-track-id');
+                    if (trackId) this.enrollUnusualAlert(trackId);
+                    return;
+                }
+            });
+        }
+
+        // Delegated click for attendance status override modal and row checkmarks
         const rosterContainer = document.getElementById('attendance-roster-list');
         if (rosterContainer) {
             rosterContainer.addEventListener('click', (e) => {
@@ -766,9 +907,39 @@ class CCTVClient {
                 if (btn) {
                     const name = btn.getAttribute('data-name');
                     const curStatus = btn.getAttribute('data-status');
-                    if (name && curStatus) {
-                        this.manualToggleAttendance(name, curStatus);
+                    if (name) {
+                        this.openOverrideModal(name, curStatus || 'PENDING');
                     }
+                }
+            });
+        }
+
+        // Teacher Override Modal event listeners
+        const statusBtns = document.querySelectorAll('#override-status-buttons .override-btn-status');
+        statusBtns.forEach(btn => {
+            btn.addEventListener('click', () => {
+                statusBtns.forEach(b => b.classList.remove('selected'));
+                btn.classList.add('selected');
+                this.overrideSelectedStatus = btn.getAttribute('data-status') || 'PRESENT';
+            });
+        });
+
+        const closeOverrideBtn = document.getElementById('btn-close-override-modal');
+        if (closeOverrideBtn) {
+            closeOverrideBtn.addEventListener('click', () => this.closeOverrideModal());
+        }
+        const cancelOverrideBtn = document.getElementById('btn-cancel-override');
+        if (cancelOverrideBtn) {
+            cancelOverrideBtn.addEventListener('click', () => this.closeOverrideModal());
+        }
+        const saveOverrideBtn = document.getElementById('btn-save-override');
+        if (saveOverrideBtn) {
+            saveOverrideBtn.addEventListener('click', () => this.saveOverride());
+        }
+        if (this.overrideModal) {
+            this.overrideModal.addEventListener('click', (e) => {
+                if (e.target === this.overrideModal) {
+                    this.closeOverrideModal();
                 }
             });
         }
@@ -777,6 +948,7 @@ class CCTVClient {
         window.addEventListener('keydown', (e) => {
             if (e.key === 'Escape') {
                 this.closeDossierModal();
+                this.closeOverrideModal();
                 if (window.appDrawer) window.appDrawer.closeDrawer();
                 return;
             }
@@ -803,22 +975,57 @@ class CCTVClient {
                 const endTime = data.class_end_time || '21:00:00';
 
                 const schedDisplay = document.getElementById('att-schedule-display');
+                const badgeCutoff = document.getElementById('att-badge-cutoff');
                 if (schedDisplay) {
-                    schedDisplay.textContent = `${startTime.slice(0, 5)} - ${endTime.slice(0, 5)}`;
+                    if (startTime >= endTime) {
+                        schedDisplay.textContent = `CONFLICT: ${this.formatTo12Hour(startTime)} - ${this.formatTo12Hour(endTime)}`;
+                        if (badgeCutoff) {
+                            badgeCutoff.classList.remove('verified');
+                            badgeCutoff.style.color = '#ef4444';
+                            badgeCutoff.style.borderColor = '#ef4444';
+                            badgeCutoff.style.background = 'rgba(239, 68, 68, 0.15)';
+                        }
+                    } else {
+                        schedDisplay.textContent = `${this.formatTo12Hour(startTime)} - ${this.formatTo12Hour(endTime)}`;
+                        if (badgeCutoff) {
+                            badgeCutoff.classList.add('verified');
+                            badgeCutoff.style.color = '';
+                            badgeCutoff.style.borderColor = '';
+                            badgeCutoff.style.background = '';
+                        }
+                    }
                 }
                 const cutoffDisplay = document.getElementById('att-cutoff-display');
                 if (cutoffDisplay) {
-                    cutoffDisplay.textContent = startTime;
+                    cutoffDisplay.textContent = this.formatTo12Hour(startTime);
                 }
 
-                const startInput = document.getElementById('att-start-time-input') || document.getElementById('att-time-input');
-                if (startInput && document.activeElement !== startInput) {
-                    startInput.value = startTime.slice(0, 5); // HH:MM
-                }
-                const endInput = document.getElementById('att-end-time-input');
-                if (endInput && document.activeElement !== endInput) {
-                    endInput.value = endTime.slice(0, 5); // HH:MM
-                }
+                const set12hInput = (inputEl, ampmBtn, time24) => {
+                    if (!time24 || !inputEl) return;
+                    const parts = time24.split(':');
+                    let h = parseInt(parts[0], 10) || 12;
+                    const m = (parts[1] || '00').padStart(2, '0');
+                    const isPm = h >= 12;
+                    h = h % 12;
+                    if (h === 0) h = 12;
+                    if (document.activeElement !== inputEl) {
+                        inputEl.value = `${String(h).padStart(2, '0')}:${m}`;
+                    }
+                    if (ampmBtn) {
+                        ampmBtn.textContent = isPm ? 'PM' : 'AM';
+                        if (isPm) ampmBtn.classList.remove('am');
+                        else ampmBtn.classList.add('am');
+                    }
+                };
+
+                const start12hInput = document.getElementById('att-start-12h');
+                const startAmpmBtn = document.getElementById('att-start-ampm');
+                set12hInput(start12hInput, startAmpmBtn, startTime);
+
+                const end12hInput = document.getElementById('att-end-12h');
+                const endAmpmBtn = document.getElementById('att-end-ampm');
+                set12hInput(end12hInput, endAmpmBtn, endTime);
+
                 const graceInput = document.getElementById('att-grace-input');
                 if (graceInput && data.grace_period_minutes !== undefined && document.activeElement !== graceInput) {
                     graceInput.value = data.grace_period_minutes;
@@ -847,13 +1054,55 @@ class CCTVClient {
                 const st = data.class_start_time || startTime;
                 const et = data.class_end_time || endTime || '11:30:00';
                 const schedDisplay = document.getElementById('att-schedule-display');
+                const badgeCutoff = document.getElementById('att-badge-cutoff');
                 if (schedDisplay) {
-                    schedDisplay.textContent = `${st.slice(0, 5)} - ${et.slice(0, 5)}`;
+                    if (st >= et) {
+                        schedDisplay.textContent = `CONFLICT: ${this.formatTo12Hour(st)} - ${this.formatTo12Hour(et)}`;
+                        if (badgeCutoff) {
+                            badgeCutoff.classList.remove('verified');
+                            badgeCutoff.style.color = '#ef4444';
+                            badgeCutoff.style.borderColor = '#ef4444';
+                            badgeCutoff.style.background = 'rgba(239, 68, 68, 0.15)';
+                        }
+                    } else {
+                        schedDisplay.textContent = `${this.formatTo12Hour(st)} - ${this.formatTo12Hour(et)}`;
+                        if (badgeCutoff) {
+                            badgeCutoff.classList.add('verified');
+                            badgeCutoff.style.color = '';
+                            badgeCutoff.style.borderColor = '';
+                            badgeCutoff.style.background = '';
+                        }
+                    }
                 }
                 const cutoffDisplay = document.getElementById('att-cutoff-display');
                 if (cutoffDisplay) {
-                    cutoffDisplay.textContent = st;
+                    cutoffDisplay.textContent = this.formatTo12Hour(st);
                 }
+
+                const set12hInput = (inputEl, ampmBtn, time24) => {
+                    if (!time24 || !inputEl) return;
+                    const parts = time24.split(':');
+                    let h = parseInt(parts[0], 10) || 12;
+                    const m = (parts[1] || '00').padStart(2, '0');
+                    const isPm = h >= 12;
+                    h = h % 12;
+                    if (h === 0) h = 12;
+                    inputEl.value = `${String(h).padStart(2, '0')}:${m}`;
+                    if (ampmBtn) {
+                        ampmBtn.textContent = isPm ? 'PM' : 'AM';
+                        if (isPm) ampmBtn.classList.remove('am');
+                        else ampmBtn.classList.add('am');
+                    }
+                };
+
+                const start12hInput = document.getElementById('att-start-12h');
+                const startAmpmBtn = document.getElementById('att-start-ampm');
+                set12hInput(start12hInput, startAmpmBtn, st);
+
+                const end12hInput = document.getElementById('att-end-12h');
+                const endAmpmBtn = document.getElementById('att-end-ampm');
+                set12hInput(end12hInput, endAmpmBtn, et);
+
                 await this.fetchAttendanceChecklist();
             } else {
                 const errData = await res.json().catch(() => ({}));
@@ -864,14 +1113,108 @@ class CCTVClient {
         }
     }
 
+    setupDateControls() {
+        const nativePicker = document.getElementById('att-date-native-picker');
+        const dateChip = document.getElementById('att-date-chip');
+        if (nativePicker) {
+            nativePicker.value = this.selectedDate;
+            nativePicker.addEventListener('change', (e) => {
+                if (e.target.value) {
+                    this.selectedDate = e.target.value;
+                    this.updateDateDisplay();
+                    this.fetchAttendanceChecklist();
+                }
+            });
+        }
+        if (dateChip) {
+            dateChip.addEventListener('click', (e) => {
+                // If user clicks anywhere on the chip, pop open the OS graphical calendar picker
+                if (nativePicker && typeof nativePicker.showPicker === 'function') {
+                    try {
+                        nativePicker.showPicker();
+                    } catch (_) {
+                        nativePicker.focus();
+                    }
+                }
+            });
+            dateChip.addEventListener('keydown', (e) => {
+                if (e.key === 'Enter' || e.key === ' ') {
+                    e.preventDefault();
+                    if (nativePicker && typeof nativePicker.showPicker === 'function') {
+                        try {
+                            nativePicker.showPicker();
+                        } catch (_) {
+                            nativePicker.focus();
+                        }
+                    }
+                }
+            });
+        }
+        this.updateDateDisplay();
+    }
+
+    shiftSelectedDate(deltaDays) {
+        if (!this.selectedDate) return;
+        const parts = this.selectedDate.split('-').map(Number);
+        const curDate = new Date(parts[0], parts[1] - 1, parts[2]);
+        curDate.setDate(curDate.getDate() + deltaDays);
+        const y = curDate.getFullYear();
+        const m = String(curDate.getMonth() + 1).padStart(2, '0');
+        const d = String(curDate.getDate()).padStart(2, '0');
+        this.selectedDate = `${y}-${m}-${d}`;
+        const nativePicker = document.getElementById('att-date-native-picker');
+        if (nativePicker) nativePicker.value = this.selectedDate;
+        this.updateDateDisplay();
+        this.fetchAttendanceChecklist();
+    }
+
+    resetDateToToday() {
+        const todayObj = new Date();
+        const y = todayObj.getFullYear();
+        const m = String(todayObj.getMonth() + 1).padStart(2, '0');
+        const d = String(todayObj.getDate()).padStart(2, '0');
+        this.selectedDate = `${y}-${m}-${d}`;
+        const nativePicker = document.getElementById('att-date-native-picker');
+        if (nativePicker) nativePicker.value = this.selectedDate;
+        this.updateDateDisplay();
+        this.fetchAttendanceChecklist();
+    }
+
+    updateDateDisplay() {
+        const labelEl = document.getElementById('att-date-display-label');
+        const dateLbl = document.getElementById('att-date-label');
+        if (!labelEl && !dateLbl) return;
+
+        const todayObj = new Date();
+        const todayStr = `${todayObj.getFullYear()}-${String(todayObj.getMonth() + 1).padStart(2, '0')}-${String(todayObj.getDate()).padStart(2, '0')}`;
+
+        let display = this.selectedDate;
+        if (this.selectedDate === todayStr) {
+            display = 'TODAY';
+        } else {
+            const parts = this.selectedDate.split('-').map(Number);
+            const d = new Date(parts[0], parts[1] - 1, parts[2]);
+            const monthNames = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+            display = `${monthNames[d.getMonth()]} ${d.getDate()}, ${d.getFullYear()}`;
+        }
+
+        if (labelEl) labelEl.textContent = display;
+        if (dateLbl) dateLbl.textContent = display;
+    }
+
     async checkAllAttendance(status = 'PRESENT') {
         if (this._isAttendanceBusy) return;
         this._isAttendanceBusy = true;
         try {
+            const payload = {
+                status: status,
+                course_id: this.selectedCourseId,
+                date: this.selectedDate
+            };
             const res = await fetch('/api/attendance/check-all', {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({ status })
+                body: JSON.stringify(payload)
             });
             if (res.ok) {
                 await this.fetchAttendanceChecklist();
@@ -886,9 +1229,142 @@ class CCTVClient {
         }
     }
 
+    async fetchCourses() {
+        try {
+            const res = await fetch('/api/courses');
+            if (res.ok) {
+                const data = await res.json();
+                this.coursesList = data.courses || [];
+                const courseSelect = document.getElementById('att-course-select');
+                if (courseSelect) {
+                    let html = '<option value="">Global Roster</option>';
+                    this.coursesList.forEach(c => {
+                        const sel = (this.selectedCourseId === c.id) ? ' selected' : '';
+                        html += `<option value="${c.id}"${sel}>${this.escapeHtml(c.code)} - ${this.escapeHtml(c.name)}</option>`;
+                    });
+                    courseSelect.innerHTML = html;
+                }
+            }
+        } catch (err) {
+            console.warn('[CCTVClient] Error fetching courses:', err);
+        }
+    }
+
+    async fetchUnusualAlerts() {
+        const container = document.getElementById('unusual-alert-container');
+        if (!container) return;
+        try {
+            const res = await fetch('/api/attendance/unusual');
+            if (res.ok) {
+                const data = await res.json();
+                this.unusualAlerts = data.alerts || [];
+                this.renderUnusualAlerts();
+            }
+        } catch (err) {
+            console.warn('[CCTVClient] Error fetching unusual alerts:', err);
+        }
+    }
+
+    renderUnusualAlerts() {
+        const container = document.getElementById('unusual-alert-container');
+        if (!container) return;
+        if (!this.unusualAlerts || this.unusualAlerts.length === 0) {
+            container.style.display = 'none';
+            container.innerHTML = '';
+            return;
+        }
+
+        container.style.display = 'flex';
+        container.style.flexDirection = 'column';
+        container.style.gap = '8px';
+
+        container.innerHTML = this.unusualAlerts.map(alert => {
+            const thumbUrl = alert.snapshot_url || (alert.snapshot_path ? `/data/unusual_events/${alert.snapshot_path.split('/').pop()}` : '/logo.png');
+            const seenTime = alert.last_seen || alert.first_seen || 'Active';
+            return `
+                <div class="unusual-alert-card" data-track-id="${alert.track_id}">
+                    <div class="unusual-alert-header">
+                        <div class="unusual-alert-badge">
+                            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polygon points="7.86 2 16.14 2 22 7.86 22 16.14 16.14 22 7.86 22 2 16.14 2 7.86 7.86 2"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+                            UNUSUAL PERSON // INTRUDER (TRACK #${alert.track_id})
+                        </div>
+                        <span style="font-size: 0.60rem; color: #fca5a5; font-family: var(--font-mono);">${seenTime}</span>
+                    </div>
+                    <div class="unusual-alert-body">
+                        <img src="${thumbUrl}" alt="Intruder crop" class="unusual-thumbnail" onerror="this.src='/logo.png'">
+                        <div style="flex: 1; min-width: 0;">
+                            <div style="font-size: 0.72rem; color: #fff; font-weight: 600;">Unidentified Non-Enrolled Subject</div>
+                            <div style="font-size: 0.62rem; color: #fca5a5; font-family: var(--font-mono); margin-top: 2px;">
+                                Sustained presence in surveillance field (&ge;15 scans)
+                            </div>
+                            <div class="unusual-alert-actions">
+                                <button type="button" class="tool-btn btn-unusual-dismiss" data-track-id="${alert.track_id}" style="padding: 3px 8px; font-size: 0.64rem; color: #f87171; border-color: rgba(244,63,94,0.4);">
+                                    Dismiss
+                                </button>
+                                <button type="button" class="tool-btn btn-accent btn-unusual-enroll" data-track-id="${alert.track_id}" style="padding: 3px 8px; font-size: 0.64rem;">
+                                    + Quick Enroll
+                                </button>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    async dismissUnusualAlert(trackId) {
+        try {
+            const res = await fetch('/api/attendance/unusual/dismiss', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ track_id: parseInt(trackId, 10) })
+            });
+            if (res.ok) {
+                await this.fetchUnusualAlerts();
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error dismissing alert:', err);
+        }
+    }
+
+    async enrollUnusualAlert(trackId) {
+        const studentName = prompt('Enter student full name to enroll this subject:');
+        if (!studentName || !studentName.trim()) return;
+
+        try {
+            const res = await fetch('/api/attendance/unusual/enroll', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    track_id: parseInt(trackId, 10),
+                    person_name: studentName.trim()
+                })
+            });
+            if (res.ok) {
+                alert(`Successfully enrolled ${studentName.trim()}! ArcFace embeddings committed and FAISS reloaded.`);
+                await this.fetchUnusualAlerts();
+                await this.fetchAttendanceChecklist();
+                await this.fetchInitialStats();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                alert(`Enrollment failed: ${errData.detail || 'Could not enroll subject'}`);
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error enrolling unusual person:', err);
+        }
+    }
+
     async fetchAttendanceChecklist() {
         try {
-            const res = await fetch('/api/attendance/checklist');
+            const params = new URLSearchParams();
+            if (this.selectedCourseId) {
+                params.append('course_id', this.selectedCourseId);
+            }
+            if (this.selectedDate) {
+                params.append('date', this.selectedDate);
+            }
+            const queryString = params.toString() ? `?${params.toString()}` : '';
+            const res = await fetch(`/api/attendance/checklist${queryString}`);
             if (res.ok) {
                 const data = await res.json();
                 this.renderAttendanceChecklist(data);
@@ -901,17 +1377,20 @@ class CCTVClient {
     renderAttendanceChecklist(data) {
         if (!data) return;
 
-        // Update KPIs
+        // Update KPIs (4 statuses: Present, Late, Pending, Absent)
         const presEl = document.getElementById('att-stat-present');
         if (presEl) presEl.textContent = data.present_count || 0;
 
         const lateEl = document.getElementById('att-stat-late');
         if (lateEl) lateEl.textContent = data.late_count || 0;
 
+        const pendEl = document.getElementById('att-stat-pending');
+        if (pendEl) pendEl.textContent = data.pending_count || 0;
+
         const absEl = document.getElementById('att-stat-absent');
         if (absEl) absEl.textContent = data.absent_count || 0;
 
-        // Total enrolled students (replaces attendance rate percentage)
+        // Total enrolled students
         const totalEl = document.getElementById('att-stat-total');
         if (totalEl) totalEl.textContent = data.total_enrolled || 0;
 
@@ -926,12 +1405,29 @@ class CCTVClient {
         if (dateLbl && data.date) dateLbl.textContent = data.date;
 
         const schedDisplay = document.getElementById('att-schedule-display');
+        const badgeCutoff = document.getElementById('att-badge-cutoff');
         if (schedDisplay && data.class_start_time && data.class_end_time) {
-            schedDisplay.textContent = `${data.class_start_time.slice(0, 5)} - ${data.class_end_time.slice(0, 5)}`;
+            if (data.class_start_time >= data.class_end_time) {
+                schedDisplay.textContent = `CONFLICT: ${this.formatTo12Hour(data.class_start_time)} - ${this.formatTo12Hour(data.class_end_time)}`;
+                if (badgeCutoff) {
+                    badgeCutoff.classList.remove('verified');
+                    badgeCutoff.style.color = '#ef4444';
+                    badgeCutoff.style.borderColor = '#ef4444';
+                    badgeCutoff.style.background = 'rgba(239, 68, 68, 0.15)';
+                }
+            } else {
+                schedDisplay.textContent = `${this.formatTo12Hour(data.class_start_time)} - ${this.formatTo12Hour(data.class_end_time)}`;
+                if (badgeCutoff) {
+                    badgeCutoff.classList.add('verified');
+                    badgeCutoff.style.color = '';
+                    badgeCutoff.style.borderColor = '';
+                    badgeCutoff.style.background = '';
+                }
+            }
         }
         const cutoffDisplay = document.getElementById('att-cutoff-display');
         if (cutoffDisplay && (data.class_start_time || data.cutoff_time)) {
-            cutoffDisplay.textContent = data.class_start_time || data.cutoff_time;
+            cutoffDisplay.textContent = this.formatTo12Hour(data.class_start_time || data.cutoff_time);
         }
 
         const rosterContainer = document.getElementById('attendance-roster-list');
@@ -940,21 +1436,23 @@ class CCTVClient {
         if (!data.checklist || data.checklist.length === 0) {
             rosterContainer.innerHTML = `
                 <div style="padding: 16px; text-align: center; color: var(--text-muted); font-size: 0.72rem; font-family: var(--font-mono);">
-                    NO ENROLLED STUDENTS FOUND IN DATABASE
+                    NO ENROLLED STUDENTS FOUND FOR SELECTED ROSTER
                 </div>
             `;
             return;
         }
 
         const rowsHtml = data.checklist.map(item => {
-            const isPresent = item.status === 'PRESENT';
-            const isLate = item.status === 'LATE';
-            const isAbsent = item.status === 'ABSENT';
+            const status = (item.status || 'ABSENT').toUpperCase();
+            const isPresent = status === 'PRESENT';
+            const isLate = status === 'LATE';
+            const isPending = status === 'PENDING';
+            const isAbsent = status === 'ABSENT';
 
-            let badgeBg = 'rgba(255,255,255,0.06)';
-            let badgeColor = '#94a3b8';
-            let badgeBorder = 'rgba(255,255,255,0.12)';
-            let iconSvg = '';
+            let badgeBg = 'rgba(244, 63, 94, 0.08)';
+            let badgeColor = '#f87171';
+            let badgeBorder = 'rgba(244, 63, 94, 0.25)';
+            let iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
             let checkToggleClass = 'unchecked';
             let checkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="9"/></svg>`;
 
@@ -972,27 +1470,29 @@ class CCTVClient {
                 iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 16 14"/></svg>`;
                 checkToggleClass = 'checked-late';
                 checkIcon = `<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><polyline points="20 6 9 17 4 12"/></svg>`;
-            } else {
-                badgeBg = 'rgba(244, 63, 94, 0.08)';
-                badgeColor = '#f87171';
-                badgeBorder = 'rgba(244, 63, 94, 0.25)';
-                iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>`;
+            } else if (isPending) {
+                badgeBg = 'rgba(234, 179, 8, 0.15)';
+                badgeColor = '#facc15';
+                badgeBorder = 'rgba(234, 179, 8, 0.4)';
+                iconSvg = `<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><circle cx="12" cy="12" r="10"/><polyline points="12 6 12 12 14 14"/></svg>`;
             }
 
             const avatarUrl = `/api/subject/avatar/${encodeURIComponent(item.person_name)}`;
-            const timeDisplay = item.check_in_time || '--:--:--';
+            const timeDisplay = item.check_in_time ? this.formatTo12Hour(item.check_in_time, true) : '--:--:--';
             const occupationDisplay = (item.occupation && item.occupation !== 'SECURITY SPECIALIST') ? this.escapeHtml(item.occupation) : 'STUDENT';
+            const manualTag = item.is_manual ? `<span class="att-manual-tag" title="Teacher manual override: ${this.escapeHtml(item.override_reason || 'Manual')}">MANUAL</span>` : '';
 
             return `
                 <div class="attendance-student-row">
                     <div style="display: flex; align-items: center; gap: 8px; min-width: 0;">
-                        <button type="button" class="att-check-toggle ${checkToggleClass}" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Attended check: Click to toggle attendance for ${this.escapeHtml(item.person_name)}">
+                        <button type="button" class="att-check-toggle ${checkToggleClass}" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Click to quick toggle check-in for ${this.escapeHtml(item.person_name)}">
                             ${checkIcon}
                         </button>
                         <img src="${avatarUrl}" alt="${this.escapeHtml(item.person_name)}" style="width: 26px; height: 26px; border-radius: 50%; object-fit: cover; border: 1px solid var(--border-medium); background: #000; flex-shrink: 0;" onerror="this.src='/logo.png'">
                         <div style="min-width: 0;">
-                            <div style="font-size: 0.74rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis;">
-                                ${this.escapeHtml(item.person_name)}
+                            <div style="font-size: 0.74rem; font-weight: 600; color: var(--text-primary); white-space: nowrap; overflow: hidden; text-overflow: ellipsis; display: flex; align-items: center;">
+                                <span style="overflow: hidden; text-overflow: ellipsis;">${this.escapeHtml(item.person_name)}</span>
+                                ${manualTag}
                             </div>
                             <div style="font-size: 0.62rem; color: var(--text-muted); font-family: var(--font-mono);">
                                 ${occupationDisplay}
@@ -1003,7 +1503,7 @@ class CCTVClient {
                         <span style="font-family: var(--font-mono); font-size: 0.68rem; color: ${item.check_in_time ? 'var(--text-secondary)' : 'var(--text-muted)'};">
                             ${timeDisplay}
                         </span>
-                        <button type="button" class="att-status-toggle" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Click to manually cycle attendance status" style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder};">
+                        <button type="button" class="att-status-toggle" data-name="${this.escapeHtml(item.person_name)}" data-status="${item.status}" title="Click to open teacher attendance override modal" style="background: ${badgeBg}; color: ${badgeColor}; border: 1px solid ${badgeBorder};">
                             ${iconSvg}
                             ${item.status}
                         </button>
@@ -1015,13 +1515,101 @@ class CCTVClient {
         rosterContainer.innerHTML = rowsHtml;
     }
 
+    openOverrideModal(personName, currentStatus) {
+        const modal = document.getElementById('attendance-override-modal');
+        if (!modal) return;
+        this.activeOverrideStudent = personName;
+        this.overrideSelectedStatus = (currentStatus === 'PENDING') ? 'PRESENT' : (currentStatus || 'PRESENT');
+
+        const nameEl = document.getElementById('override-modal-name');
+        if (nameEl) nameEl.textContent = personName;
+
+        const curStatusEl = document.getElementById('override-modal-cur-status');
+        if (curStatusEl) {
+            curStatusEl.textContent = currentStatus || 'UNKNOWN';
+            curStatusEl.style.color = (currentStatus === 'PRESENT') ? 'var(--emerald-verified)' :
+                                      (currentStatus === 'LATE') ? 'var(--amber-warning)' :
+                                      (currentStatus === 'PENDING') ? '#facc15' : '#f87171';
+        }
+
+        const avatarEl = document.getElementById('override-modal-avatar');
+        if (avatarEl) avatarEl.src = `/api/subject/avatar/${encodeURIComponent(personName)}`;
+
+        const reasonInput = document.getElementById('override-reason-input');
+        if (reasonInput) reasonInput.value = '';
+
+        // Select the active status button
+        const buttons = document.querySelectorAll('#override-status-buttons .override-btn-status');
+        buttons.forEach(btn => {
+            if (btn.getAttribute('data-status') === this.overrideSelectedStatus) {
+                btn.classList.add('selected');
+            } else {
+                btn.classList.remove('selected');
+            }
+        });
+
+        modal.style.display = 'flex';
+        modal.classList.add('active');
+    }
+
+    closeOverrideModal() {
+        const modal = document.getElementById('attendance-override-modal');
+        if (modal) {
+            modal.style.display = 'none';
+            modal.classList.remove('active');
+        }
+        this.activeOverrideStudent = null;
+    }
+
+    async saveOverride() {
+        if (!this.activeOverrideStudent) return;
+        const reasonInput = document.getElementById('override-reason-input');
+        const reason = reasonInput ? reasonInput.value.trim() : '';
+
+        try {
+            const res = await fetch('/api/attendance/manual', {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({
+                    person_name: this.activeOverrideStudent,
+                    status: this.overrideSelectedStatus,
+                    reason: reason || 'Teacher manual override',
+                    course_id: this.selectedCourseId,
+                    date: this.selectedDate
+                })
+            });
+            if (res.ok) {
+                this.closeOverrideModal();
+                await this.fetchAttendanceChecklist();
+            } else {
+                const errData = await res.json().catch(() => ({}));
+                alert(`Override failed: ${errData.detail || 'Could not update status'}`);
+            }
+        } catch (err) {
+            console.error('[CCTVClient] Error saving override:', err);
+        }
+    }
+
+    exportAttendanceCSV() {
+        const params = new URLSearchParams();
+        if (this.selectedCourseId) {
+            params.append('course_id', this.selectedCourseId);
+        }
+        if (this.selectedDate) {
+            params.append('date', this.selectedDate);
+        }
+        const queryString = params.toString() ? `?${params.toString()}` : '';
+        window.open(`/api/attendance/export${queryString}`, '_blank');
+    }
+
     async manualToggleAttendance(personName, currentStatus) {
         if (this._isAttendanceBusy) return;
         this._isAttendanceBusy = true;
-        // Toggle sequence: ABSENT -> PRESENT -> LATE -> ABSENT
+        // Toggle sequence: ABSENT/PENDING -> PRESENT -> LATE -> ABSENT
         let nextStatus = 'PRESENT';
         if (currentStatus === 'PRESENT') nextStatus = 'LATE';
         else if (currentStatus === 'LATE') nextStatus = 'ABSENT';
+        else if (currentStatus === 'ABSENT' || currentStatus === 'PENDING') nextStatus = 'PRESENT';
 
         try {
             const res = await fetch('/api/attendance/manual', {
@@ -1029,7 +1617,10 @@ class CCTVClient {
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({
                     person_name: personName,
-                    status: nextStatus
+                    status: nextStatus,
+                    course_id: this.selectedCourseId,
+                    date: this.selectedDate,
+                    reason: 'Quick toggle via attendance checklist'
                 })
             });
             if (res.ok) {
@@ -1055,3 +1646,4 @@ class CCTVClient {
 }
 
 window.CCTVClient = CCTVClient;
+

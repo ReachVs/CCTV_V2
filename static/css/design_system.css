@@ -816,6 +816,200 @@ header.app-header {
     transition: transform 70ms var(--spring-snappy) !important;
 }
 
+/* --------------------------------------------------------------------------
+   Apple Fluid Date Picker & Stepper Controls (§1, §4, §12)
+   Tactile response, native calendar invocation, zero manual typing
+   -------------------------------------------------------------------------- */
+.apple-date-control-bar {
+    position: relative;
+    user-select: none;
+    -webkit-user-select: none;
+}
+
+.apple-date-stepper-group {
+    display: flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.apple-stepper-btn {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 24px;
+    height: 24px;
+    border-radius: 6px;
+    background: rgba(255, 255, 255, 0.05);
+    border: 1px solid var(--border-hairline);
+    color: var(--text-secondary);
+    cursor: pointer;
+    transition: transform 100ms var(--spring-snappy), background-color 140ms ease, color 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.apple-stepper-btn:hover {
+    background: rgba(255, 255, 255, 0.12);
+    color: #fff;
+    transform: scale(1.06);
+}
+
+.apple-stepper-btn:active {
+    transform: scale(0.88) !important;
+    background: rgba(56, 189, 248, 0.2) !important;
+    color: var(--cyan-accent) !important;
+    transition: transform 60ms var(--spring-snappy) !important;
+}
+
+.apple-date-picker-chip {
+    position: relative;
+    display: inline-flex;
+    align-items: center;
+    gap: 6px;
+    padding: 3px 10px;
+    height: 26px;
+    background: rgba(14, 18, 27, 0.85);
+    border: 1px solid var(--border-medium);
+    border-top: 1px solid var(--border-specular);
+    border-radius: var(--radius-full);
+    font-size: 0.70rem;
+    font-family: var(--font-mono);
+    color: var(--text-primary);
+    cursor: pointer;
+    box-shadow: 0 2px 8px rgba(0, 0, 0, 0.35);
+    transition: transform 120ms var(--spring-snappy), border-color 140ms ease, box-shadow 140ms ease, background-color 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.apple-date-picker-chip:hover {
+    background: rgba(24, 30, 44, 0.95);
+    border-color: var(--cyan-accent);
+    box-shadow: 0 0 12px rgba(56, 189, 248, 0.25);
+    transform: scale(1.02);
+}
+
+.apple-date-picker-chip:active {
+    transform: scale(0.95) !important;
+    transition: transform 60ms var(--spring-snappy) !important;
+}
+
+.apple-date-native-hidden {
+    position: absolute;
+    inset: 0;
+    width: 100%;
+    height: 100%;
+    opacity: 0;
+    cursor: pointer;
+    pointer-events: auto;
+}
+
+.apple-today-badge-btn {
+    display: inline-flex;
+    align-items: center;
+    padding: 3px 8px;
+    height: 24px;
+    font-size: 0.62rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    border-radius: var(--radius-full);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    background: rgba(56, 189, 248, 0.08);
+    color: var(--cyan-accent);
+    cursor: pointer;
+    transition: transform 100ms var(--spring-snappy), background-color 140ms ease, box-shadow 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+}
+
+.apple-today-badge-btn:hover {
+    background: rgba(56, 189, 248, 0.18);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+    transform: scale(1.05);
+}
+
+.apple-today-badge-btn:active {
+    transform: scale(0.90) !important;
+    transition: transform 60ms var(--spring-snappy) !important;
+}
+
+/* Tactile Apple Check-All Pill Button */
+.apple-check-all-btn {
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+    padding: 3px 9px;
+    font-size: 0.64rem;
+    font-weight: 700;
+    font-family: var(--font-sans);
+    color: var(--emerald-verified);
+    background: rgba(16, 185, 129, 0.10);
+    border: 1px solid rgba(16, 185, 129, 0.35);
+    border-top: 1px solid rgba(16, 185, 129, 0.55);
+    border-radius: var(--radius-full);
+    cursor: pointer;
+    box-shadow: 0 2px 6px rgba(0, 0, 0, 0.2);
+    transition: transform 120ms var(--spring-snappy), background-color 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+    -webkit-tap-highlight-color: transparent;
+    touch-action: manipulation;
+}
+
+.apple-check-all-btn:hover {
+    background: rgba(16, 185, 129, 0.20);
+    border-color: var(--emerald-verified);
+    box-shadow: 0 0 10px rgba(48, 209, 88, 0.3);
+    transform: translateY(-0.5px) scale(1.03);
+}
+
+.apple-check-all-btn:active {
+    transform: scale(0.92) !important;
+    background: rgba(16, 185, 129, 0.32) !important;
+    transition: transform 60ms var(--spring-snappy) !important;
+}
+
+/* Tactile Apple AM/PM Toggle Pill (§1, §4, §12) */
+.apple-ampm-pill {
+    display: inline-flex;
+    align-items: center;
+    justify-content: center;
+    width: 32px;
+    height: 26px;
+    border-radius: 6px;
+    font-size: 0.65rem;
+    font-family: var(--font-mono);
+    font-weight: 700;
+    cursor: pointer;
+    background: rgba(56, 189, 248, 0.12);
+    border: 1px solid rgba(56, 189, 248, 0.35);
+    color: var(--cyan-accent);
+    user-select: none;
+    -webkit-user-select: none;
+    -webkit-tap-highlight-color: transparent;
+    transition: transform 100ms var(--spring-snappy), background-color 140ms ease, color 140ms ease, border-color 140ms ease;
+}
+
+.apple-ampm-pill:hover {
+    background: rgba(56, 189, 248, 0.22);
+    border-color: var(--cyan-accent);
+    box-shadow: 0 0 8px rgba(56, 189, 248, 0.3);
+    transform: scale(1.05);
+}
+
+.apple-ampm-pill:active {
+    transform: scale(0.88) !important;
+    background: rgba(56, 189, 248, 0.35) !important;
+    transition: transform 60ms var(--spring-snappy) !important;
+}
+
+.apple-ampm-pill.am {
+    background: rgba(245, 158, 11, 0.12);
+    border-color: rgba(245, 158, 11, 0.35);
+    color: var(--amber-warning);
+}
+
+.apple-ampm-pill.am:hover {
+    background: rgba(245, 158, 11, 0.22);
+    box-shadow: 0 0 8px rgba(245, 158, 11, 0.3);
+}
+
 /* ==========================================================================
    SECURITY AUDIT TRAIL STREAM
    ========================================================================== */
@@ -1602,3 +1796,88 @@ header.app-header {
         background: rgba(0, 0, 0, 0.88) !important;
     }
 }
+
+/* ==========================================================================
+   PINNED UNUSUAL PERSON / INTRUDER ALERT BANNER
+   ========================================================================== */
+.unusual-alert-card {
+    background: linear-gradient(135deg, rgba(244, 63, 94, 0.12) 0%, rgba(22, 10, 16, 0.85) 100%);
+    border: 1px solid rgba(244, 63, 94, 0.45);
+    border-radius: var(--radius-md);
+    padding: 10px 12px;
+    box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 16px rgba(244, 63, 94, 0.2);
+    animation: alert-pulse 2.2s infinite ease-in-out;
+    display: flex;
+    flex-direction: column;
+    gap: 8px;
+}
+
+@keyframes alert-pulse {
+    0%, 100% {
+        border-color: rgba(244, 63, 94, 0.45);
+        box-shadow: 0 4px 16px rgba(0, 0, 0, 0.4), 0 0 12px rgba(244, 63, 94, 0.2);
+    }
+    50% {
+        border-color: rgba(244, 63, 94, 0.8);
+        box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5), 0 0 22px rgba(244, 63, 94, 0.45);
+    }
+}
+
+.unusual-alert-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.unusual-alert-badge {
+    font-family: var(--font-mono);
+    font-size: 0.65rem;
+    font-weight: 700;
+    color: #f87171;
+    display: flex;
+    align-items: center;
+    gap: 5px;
+    letter-spacing: 0.04em;
+}
+
+.unusual-alert-body {
+    display: flex;
+    align-items: center;
+    gap: 10px;
+}
+
+.unusual-thumbnail {
+    width: 44px;
+    height: 44px;
+    border-radius: 6px;
+    object-fit: cover;
+    border: 1px solid rgba(244, 63, 94, 0.5);
+    background: #000;
+    flex-shrink: 0;
+}
+
+.unusual-alert-actions {
+    display: flex;
+    align-items: center;
+    gap: 6px;
+    margin-top: 4px;
+}
+
+/* Override Status Buttons */
+.override-btn-status.selected {
+    box-shadow: 0 0 12px currentColor;
+    background: rgba(255, 255, 255, 0.14) !important;
+}
+
+.att-manual-tag {
+    font-family: var(--font-mono);
+    font-size: 0.55rem;
+    padding: 1px 4px;
+    border-radius: 3px;
+    background: rgba(255, 255, 255, 0.08);
+    color: var(--text-muted);
+    border: 1px solid var(--border-hairline);
+    margin-left: 4px;
+    vertical-align: middle;
+}
+

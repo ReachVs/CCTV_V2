@@ -48,6 +48,7 @@ from src.domain.track_registry import (
 )
 from src.domain.identity_observer import (
     IdentityConfirmedEvent,
+    UnusualPersonDetectedEvent,
     IdentityObserver,
     AttendanceIdentityObserver,
     AuditIdentityObserver,
@@ -678,11 +679,6 @@ class BiometricTrackingEngine:
         new_audit_events: List[Dict[str, Any]] = []
 
         with self.lock:
-            # Purge suppressed active scanning tracks
-            for s_tid in pre_filter_res.suppressed_track_ids:
-                if s_tid in self.active_tracks and self.active_tracks[s_tid].startswith("Scanning"):
-                    self.purge_track(s_tid)
-
             # Handle resolved contention tracks
             for r_tid in pre_filter_res.resolved_contended_track_ids:
                 if r_tid in self._sessions:
@@ -737,11 +733,13 @@ class BiometricTrackingEngine:
                 continue
 
             # Standard Biometric Identification Branch
-            # Focus face search on the upper torso/head region (top 55% of the body box)
+            # Adaptive face crop: seated/webcam upper-body (aspect >= 0.55) preserves chin; standing body uses 0.70
+            aspect = float(box_w) / float(box_h) if box_h > 0 else 0.5
+            crop_ratio = 1.05 if aspect >= 0.55 else 0.70
             pad_y = int(box_h * 0.10)
             pad_x = int(box_w * 0.15)
             crop_y1 = max(0, fy1 - pad_y)
-            crop_y2 = min(h_frame, fy1 + int(box_h * 0.55))
+            crop_y2 = min(h_frame, fy1 + int(box_h * crop_ratio))
             crop_x1 = max(0, fx1 - pad_x)
             crop_x2 = min(w_frame, fx2 + pad_x)
             temp_crop = frame[crop_y1:crop_y2, crop_x1:crop_x2] if (crop_y2 > crop_y1 and crop_x2 > crop_x1) else None
@@ -797,7 +795,7 @@ class BiometricTrackingEngine:
             )
             session.status = TrackStatus(curr_status)
             session.confidence = 0.85 if is_confirmed else 0.50
-            session.identity_name = f"Contended Track {track_id}" if is_contended_flag else (subject_name if is_confirmed and not is_unknown else (subject_name if not is_scanning else ""))
+            session.identity_name = f"Contended Track {track_id}" if is_contended_flag else (subject_name if is_confirmed and not is_unknown else (subject_name if (not is_scanning or subject_name.startswith("Verifying")) else ""))
             session.keypoints = self.track_keypoints.get(track_id)
             session.meta = meta_dict
 
@@ -992,27 +990,61 @@ class BiometricTrackingEngine:
                 if telemetry.get("confirmed", False):
                     if display_name == "Unknown Person":
                         session.mark_unknown()
-                    elif not display_name.startswith("Scanning") and not display_name.startswith("Unverified") and not display_name.startswith("Contended"):
+                    elif (
+                        not display_name.startswith("Scanning")
+                        and not display_name.startswith("Unverified")
+                        and not display_name.startswith("Contended")
+                        and not display_name.startswith("Verifying")
+                    ):
                         session.confirm_identity(display_name, telemetry.get("dist1", 0.5), telemetry.get("norm", 1.0))
                 else:
                     if session.is_confirmed and session.status == TrackStatus.UNKNOWN and not display_name.startswith("Unknown"):
                         session.status = TrackStatus.SCANNING
                     session.identity_name = display_name
 
-            if telemetry.get("confirmed") and display_name not in ["Unknown", "Ambiguous Match", "Unknown Person"]:
+            if (
+                telemetry.get("confirmed")
+                and display_name not in ["Unknown", "Ambiguous Match", "Unknown Person", "Unusual Person"]
+                and not display_name.startswith("Scanning")
+                and not display_name.startswith("Unverified")
+                and not display_name.startswith("Contended")
+                and not display_name.startswith("Verifying")
+            ):
                 now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
                 dist1 = float(telemetry.get("dist1", 0.0))
+
+                clean_person_name = display_name
+                if clean_person_name.startswith("Verified: "):
+                    clean_person_name = clean_person_name.removeprefix("Verified: ").strip()
+                if clean_person_name.startswith("Verifying: "):
+                    clean_person_name = clean_person_name.removeprefix("Verifying: ").strip()
+                    if "(" in clean_person_name and clean_person_name.endswith(")"):
+                        clean_person_name = clean_person_name[:clean_person_name.rfind("(")].strip()
 
                 # Atomic Domain Event Dispatch across IdentityObserver seam
                 event = IdentityConfirmedEvent(
                     track_id=track_id,
-                    person_name=display_name,
+                    person_name=clean_person_name,
                     match_distance=dist1,
                     timestamp_str=now_str,
                     frame_num=self.frame_count,
                     metadata={"norm": float(telemetry.get("norm", 1.0))}
                 )
                 self.identity_dispatcher.dispatch(event)
+            elif telemetry.get("unusual_person", False) and track_id in self._sessions:
+                session = self._sessions[track_id]
+                if not getattr(session, "_unusual_event_dispatched", False):
+                    session._unusual_event_dispatched = True
+                    now_str = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
+                    unusual_event = UnusualPersonDetectedEvent(
+                        track_id=track_id,
+                        first_seen_frame=session.first_seen,
+                        frame_num=self.frame_count,
+                        timestamp_str=now_str,
+                        snapshot_path=getattr(session, "snapshot_path", "") or "",
+                        metadata={"valid_face_crops": session.valid_face_crops}
+                    )
+                    self.identity_dispatcher.dispatch_unusual_person(unusual_event)
 
     # -----------------------------------------------------------------
     # Telemetry, Snapshot & Mode Interfaces
@@ -1042,7 +1074,13 @@ class BiometricTrackingEngine:
         with self.lock:
             result = []
             for tid, name in self.active_tracks.items():
-                if str(name).startswith("Scanning") or str(name).startswith("Unverified") or str(name) == "Unknown Person":
+                if (
+                    str(name).startswith("Scanning")
+                    or str(name).startswith("Unverified")
+                    or str(name).startswith("Verifying")
+                    or str(name).startswith("Contended")
+                    or str(name) == "Unknown Person"
+                ):
                     continue
                 meta_info = {}
                 if isinstance(self.metadata, dict):

@@ -102,6 +102,38 @@ class TestStreamBroadcaster(unittest.TestCase):
         self.assertIsInstance(streams, list)
         self.assertTrue(self.broadcaster.is_camera_ready())
 
+    def test_identity_dispatch_filters_transient_tracks(self):
+        """Verify unconfirmed or transient tracks are never dispatched as confirmed identities."""
+        dispatched_events = []
+
+        class MockDispatcher:
+            def dispatch(self, event):
+                dispatched_events.append(event)
+
+        class MockTrack:
+            def __init__(self, name, is_confirmed, conf):
+                self.subject_name = name
+                self.is_confirmed = is_confirmed
+                self.match_confidence = conf
+                self.track_id = 1
+
+        self.mock_engine.identity_dispatcher = MockDispatcher()
+
+        # 1. Track is accumulating votes / unconfirmed: must NOT dispatch
+        self.mock_engine.get_active_tracks = lambda: [
+            MockTrack("Verifying: Ceaser (1/2)", is_confirmed=False, conf=0.60)
+        ]
+        self.broadcaster.process_frame(np.zeros((240, 320, 3), dtype=np.uint8))
+        self.assertEqual(len(dispatched_events), 0)
+
+        # 2. Track is confirmed: MUST dispatch with clean name
+        self.mock_engine.get_active_tracks = lambda: [
+            MockTrack("Verified: Ceaser", is_confirmed=True, conf=0.85)
+        ]
+        self.broadcaster.process_frame(np.zeros((240, 320, 3), dtype=np.uint8))
+        self.assertEqual(len(dispatched_events), 1)
+        self.assertEqual(dispatched_events[0].person_name, "Ceaser")
+
 
 if __name__ == "__main__":
     unittest.main()
